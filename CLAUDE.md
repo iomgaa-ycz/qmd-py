@@ -149,6 +149,13 @@ qmd-py/
 > - 显式优于隐式：关键参数必须显式传递
 > - 不考虑向后兼容，直接改原文件
 
+> [!CRITICAL]
+> **真实代码原则**
+> - **严禁使用 mock、stub、占位符、伪实现**（如随机数模拟 embedding、Jaccard 代替 reranker）
+> - MVP 不等于假代码——MVP 是功能精简但真实可用的实现
+> - 所有函数必须调用真实的底层 API（llama_cpp.Llama、sqlite-vec 等）
+> - 如果某个功能暂时无法实现（如缺少模型文件），应抛出明确的 NotImplementedError，而非用 mock 伪装
+
 ### 4.2 代码风格
 
 - **类型注解**: 强制所有函数签名包含完整类型注解（Python 3.10+ 语法）
@@ -198,14 +205,23 @@ qmd-py/
 ### 4.4 测试规范
 
 - **测试框架**: pytest
-- **目标覆盖率**: 80%
+- **目标覆盖率**: **85%**（每个模块独立达标）
 - **测试位置**: `tests/` 目录
 - **运行命令**: 
   ```bash
-  conda run -n qmd-py pytest tests/ --cov=qmd --cov-report=term-missing
+  source ~/miniconda3/etc/profile.d/conda.sh && conda activate qmd-py && pytest tests/ -v --cov=qmd --cov-report=term-missing
   ```
 
 - **必须先写测试或同步编写**
+
+- **测试层次要求**:
+  1. **单元测试**: 覆盖每个函数的正常路径、边界情况、异常处理
+  2. **集成测试**: 验证模块之间的组合能力——不仅单元完好，组合起来也能实现完整功能
+  3. 每个任务完成时，必须同时包含单元测试和集成测试
+
+- **禁止在被测代码中使用 mock**:
+  - 被测试的源码（`qmd/` 下的代码）必须是真实实现
+  - 测试代码（`tests/` 下）可以使用 `unittest.mock` 来模拟外部依赖（如 GGUF 模型文件），但必须确保 mock 的行为与真实 API 一致
 
 ### 4.5 Git 规范
 
