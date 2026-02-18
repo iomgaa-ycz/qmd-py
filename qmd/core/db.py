@@ -45,7 +45,9 @@ def open_database(path: str | Path = ":memory:") -> sqlite3.Connection:
     Returns:
         已配置好的 sqlite3.Connection。
     """
-    conn = sqlite3.connect(str(path))
+    # check_same_thread=False 允许跨线程使用（watcher 需要）
+    # 注意：需要通过锁或其他机制确保线程安全
+    conn = sqlite3.connect(str(path), check_same_thread=False)
     conn.enable_load_extension(True)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")

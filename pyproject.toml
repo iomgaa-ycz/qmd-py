@@ -12,6 +12,7 @@ dependencies = [
     "PyYAML",
     "pydantic",
     "loguru",
+    "watchdog",
 ]
 
 [project.optional-dependencies]
