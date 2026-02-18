@@ -1,7 +1,7 @@
 """
 测试 sentence-transformers 后端实现
 
-使用真实的 sentence-transformers 模型进行测试（all-MiniLM-L6-v2 很小，可以实际加载）。
+使用真实的 sentence-transformers 模型进行测试（paraphrase-multilingual-MiniLM-L12-v2，支持中英双语）。
 """
 
 import numpy as np
@@ -22,13 +22,13 @@ class TestSentenceTransformerBackend:
         Returns:
             SentenceTransformerBackend 实例
         """
-        # 使用默认模型 all-MiniLM-L6-v2（384 维，约 90MB）
-        return SentenceTransformerBackend(model_name="all-MiniLM-L6-v2", device="cpu")
+        # 使用默认多语言模型 paraphrase-multilingual-MiniLM-L12-v2（384 维，支持中英双语）
+        return SentenceTransformerBackend(model_name="paraphrase-multilingual-MiniLM-L12-v2", device="cpu")
 
     def test_init(self):
         """测试初始化"""
-        backend = SentenceTransformerBackend(model_name="all-MiniLM-L6-v2")
-        assert backend.model_name == "all-MiniLM-L6-v2"
+        backend = SentenceTransformerBackend(model_name="paraphrase-multilingual-MiniLM-L12-v2")
+        assert backend.model_name == "paraphrase-multilingual-MiniLM-L12-v2"
         assert backend.device in ["cuda", "mps", "cpu"]
         assert backend._model is None  # 懒加载，初始为 None
 
@@ -46,7 +46,7 @@ class TestSentenceTransformerBackend:
     def test_get_embedding_dimensions(self, backend: SentenceTransformerBackend):
         """测试获取向量维度"""
         dim = backend.get_embedding_dimensions()
-        # all-MiniLM-L6-v2 的维度是 384
+        # paraphrase-multilingual-MiniLM-L12-v2 的维度是 384
         assert dim == 384
 
     def test_embed_success(self, backend: SentenceTransformerBackend):
@@ -54,7 +54,7 @@ class TestSentenceTransformerBackend:
         result = backend.embed("This is a test sentence.")
 
         assert result is not None
-        assert result.model == "all-MiniLM-L6-v2"
+        assert result.model == "paraphrase-multilingual-MiniLM-L12-v2"
         assert len(result.embedding) == 384
         # 验证向量不是全零
         assert not all(v == 0 for v in result.embedding)
@@ -99,7 +99,7 @@ class TestSentenceTransformerBackend:
         assert len(results) == 3
         assert all(r is not None for r in results)
         assert all(len(r.embedding) == 384 for r in results if r)
-        assert all(r.model == "all-MiniLM-L6-v2" for r in results if r)
+        assert all(r.model == "paraphrase-multilingual-MiniLM-L12-v2" for r in results if r)
 
         # 验证不同文本产生不同向量
         vec1 = np.array(results[0].embedding)
@@ -166,7 +166,7 @@ class TestSentenceTransformerBackend:
 
         assert result is not None
         assert len(result.results) == 3
-        assert result.model == "all-MiniLM-L6-v2"
+        assert result.model == "paraphrase-multilingual-MiniLM-L12-v2"
 
         # 验证排序：doc3 和 doc1 应该比 doc2 更相关
         scores = {r.file: r.score for r in result.results}
