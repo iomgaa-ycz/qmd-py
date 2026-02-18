@@ -17,7 +17,7 @@ from typing import Any
 from loguru import logger
 
 from qmd.core.chunking import chunk_document
-from qmd.core.config import Collection
+from qmd.core.config import Collection, NamedCollection
 from qmd.core.db import Database
 from qmd.llm.base import LLMBackend
 from qmd.utils.hashing import content_hash as compute_content_hash
@@ -165,7 +165,7 @@ class Store:
 
     def update_collection(
         self,
-        collection: Collection,
+        collection: NamedCollection,
         llm_backend: LLMBackend | None = None,
         auto_embed: bool = False,
     ) -> dict[str, int]:
