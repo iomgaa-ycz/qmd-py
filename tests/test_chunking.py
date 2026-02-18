@@ -277,9 +277,24 @@ class TestEdgeCases:
 
     def test_empty_document(self):
         """测试空文档"""
+        # 空字符串应返回空列表
         chunks = chunk_document("", max_chars=1000)
-        assert len(chunks) == 1
-        assert chunks[0].text == ""
+        assert len(chunks) == 0
+        assert chunks == []
+
+    def test_whitespace_only_document(self):
+        """测试只有空格的文档"""
+        # 只有空格应返回空列表
+        chunks = chunk_document("   ", max_chars=1000)
+        assert len(chunks) == 0
+
+        # 只有换行应返回空列表
+        chunks = chunk_document("\n\n", max_chars=1000)
+        assert len(chunks) == 0
+
+        # 混合空白字符应返回空列表
+        chunks = chunk_document("  \n  \t  \n", max_chars=1000)
+        assert len(chunks) == 0
 
     def test_document_exactly_max_chars(self):
         """测试文档长度恰好等于 max_chars"""
