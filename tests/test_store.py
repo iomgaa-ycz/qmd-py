@@ -153,6 +153,29 @@ class TestStore:
         success = store.remove_document("test", "nonexistent.md")
         assert success is False
 
+    def test_remove_document_search_exclusion(self, tmp_db: Database):
+        """测试删除文档后搜索不应命中该文档"""
+        from qmd.core.retrieval import bm25_search
+
+        store = Store(tmp_db)
+
+        # 1. 索引文档
+        content = "# Python Programming\n\nPython is a high-level programming language."
+        store.index_document("test", "python.md", content)
+
+        # 2. 搜索确认能命中
+        results = bm25_search(tmp_db, "Python programming", limit=10)
+        assert len(results) > 0
+        assert any("python.md" in r.file for r in results)
+
+        # 3. 删除文档
+        success = store.remove_document("test", "python.md")
+        assert success is True
+
+        # 4. 再次搜索，确认不再命中
+        results_after = bm25_search(tmp_db, "Python programming", limit=10)
+        assert not any("python.md" in r.file for r in results_after)
+
     # === 查询方法测试 ===
 
     def test_get_document_count(self, store: Store):
