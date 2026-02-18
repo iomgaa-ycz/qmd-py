@@ -5,6 +5,8 @@
 """
 
 import os
+import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 from loguru import logger
@@ -118,3 +120,104 @@ def normalize_path(path: str) -> str:
 
     # 再次确保使用正斜杠（Windows 上 Path 可能返回反斜杠）
     return result.replace("\\", "/")
+
+
+def handelize(path: str) -> str:
+    """
+    将路径转换为 token-friendly 格式
+
+    清理路径，使其更适合用作文档标识符：
+    - 统一分隔符为 /
+    - 移除前导 ./
+    - 移除尾部斜杠
+
+    Args:
+        path: 原始路径
+
+    Returns:
+        规范化后的路径
+
+    Examples:
+        >>> handelize("./docs/report.md")
+        "docs/report.md"
+        >>> handelize("docs/")
+        "docs"
+    """
+    normalized = normalize_path(path)
+
+    # 移除前导 ./
+    if normalized.startswith("./"):
+        normalized = normalized[2:]
+
+    # 移除尾部斜杠
+    if normalized.endswith("/"):
+        normalized = normalized[:-1]
+
+    return normalized
+
+
+def extract_title(content: str, filename: str) -> str:
+    """
+    从文档内容中提取标题
+
+    优先级：
+    1. 第一个 H1 标题 (# Title)
+    2. 文件名（去掉扩展名）
+
+    Args:
+        content: 文档内容
+        filename: 文件名或路径
+
+    Returns:
+        文档标题
+
+    Examples:
+        >>> extract_title("# My Document\\n\\nContent", "doc.md")
+        "My Document"
+        >>> extract_title("No heading here", "report.md")
+        "report"
+    """
+    # 尝试提取第一个 H1 标题
+    match = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
+    if match:
+        return match.group(1).strip()
+
+    # 使用文件名（去掉扩展名）
+    return Path(filename).stem
+
+
+def get_file_stats(file_path: str) -> dict[str, str]:
+    """
+    获取文件统计信息
+
+    Args:
+        file_path: 文件路径
+
+    Returns:
+        包含 created_at 和 modified_at 的字典（ISO 8601 格式）
+    """
+    try:
+        path = Path(file_path)
+        if not path.exists():
+            # 文件不存在，返回当前时间
+            now = datetime.now(timezone.utc).isoformat()
+            return {"created_at": now, "modified_at": now}
+
+        stat = path.stat()
+
+        # 创建时间（st_birthtime 在某些系统上不可用）
+        try:
+            created_timestamp = stat.st_birthtime
+        except AttributeError:
+            # 使用 ctime（metadata 修改时间）作为 fallback
+            created_timestamp = stat.st_ctime
+
+        created_at = datetime.fromtimestamp(created_timestamp, tz=timezone.utc).isoformat()
+        modified_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
+
+        return {"created_at": created_at, "modified_at": modified_at}
+
+    except Exception as e:
+        logger.warning(f"获取文件统计信息失败: {file_path} - {e}")
+        now = datetime.now(timezone.utc).isoformat()
+        return {"created_at": now, "modified_at": now}
