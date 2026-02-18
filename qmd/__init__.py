@@ -59,13 +59,13 @@ class QMD:
         self.backend_type = backend
 
         # 加载配置（总是从默认路径）
-        from qmd.core.config import CollectionConfig
+        from qmd.core.config import CollectionConfig, load_config as load_global_config
         if self.config_path and self.config_path.exists():
             # 暂不支持自定义配置路径，记录警告
             logger.warning(f"暂不支持自定义配置路径，忽略: {self.config_path}")
 
-        # 对于测试或独立实例，创建空配置
-        self.config = CollectionConfig(collections={})
+        # 加载全局配置
+        self.config = load_global_config()
 
         # 初始化数据库
         if db_path:
@@ -181,6 +181,10 @@ class QMD:
             logger.warning(f"Collection '{name}' 已存在，将被覆盖")
 
         self.config.collections[name] = collection
+
+        # 保存配置
+        from qmd.core.config import save_config
+        save_config(self.config)
 
         logger.info(f"添加 collection: {name} @ {path}")
 
