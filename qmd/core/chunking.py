@@ -215,6 +215,10 @@ def chunk_document(
     Returns:
         文档块列表
     """
+    # 空内容检查
+    if not content or not content.strip():
+        return []
+
     if len(content) <= max_chars:
         return [Chunk(text=content, pos=0)]
 
