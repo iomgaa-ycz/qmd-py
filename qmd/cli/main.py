@@ -169,9 +169,19 @@ def cmd_watch(args: argparse.Namespace) -> int:
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
-    """启动 MCP 服务器（占位）"""
-    print("MCP 服务器功能将在 Phase 5 实现")
-    return 1
+    """启动 MCP 服务器"""
+    import asyncio
+    from qmd.mcp import serve
+
+    print("启动 QMD MCP 服务器（stdio transport）...")
+    print("按 Ctrl+C 停止服务器")
+
+    try:
+        asyncio.run(serve(db_path=args.db))
+        return 0
+    except KeyboardInterrupt:
+        print("\n服务器已停止")
+        return 0
 
 
 def cmd_status(args: argparse.Namespace) -> int:
