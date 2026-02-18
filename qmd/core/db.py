@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 from loguru import logger
 
@@ -195,3 +196,267 @@ def ensure_vec_table(conn: sqlite3.Connection, dimensions: int = 768) -> None:
         f")"
     )
     logger.debug(f"vectors_vec 已创建（维度={dimensions}）")
+
+
+# ---------------------------------------------------------------------------
+# Database 类 —— 封装所有数据库操作
+# ---------------------------------------------------------------------------
+
+
+class Database:
+    """数据库操作封装类
+
+    提供文档、内容、向量的 CRUD 操作。
+    """
+
+    def __init__(self, conn: sqlite3.Connection):
+        """初始化数据库实例
+
+        Args:
+            conn: SQLite 连接
+        """
+        self.conn = conn
+
+    # === Content 操作 ===
+
+    def insert_content(self, content_hash: str, content: str, created_at: str) -> None:
+        """插入内容（content-addressable 存储）
+
+        使用 INSERT OR IGNORE，重复 hash 会被跳过。
+
+        Args:
+            content_hash: 内容 SHA256 哈希
+            content: 文档内容
+            created_at: 创建时间（ISO 8601）
+        """
+        self.conn.execute(
+            "INSERT OR IGNORE INTO content (hash, doc, created_at) VALUES (?, ?, ?)",
+            (content_hash, content, created_at),
+        )
+        self.conn.commit()
+
+    # === Document 操作 ===
+
+    def insert_document(
+        self,
+        collection: str,
+        path: str,
+        title: str,
+        content_hash: str,
+        created_at: str,
+        modified_at: str,
+    ) -> None:
+        """插入文档记录
+
+        使用 UPSERT（ON CONFLICT ... DO UPDATE），冲突时更新。
+
+        Args:
+            collection: 集合名称
+            path: 文档路径（normalized）
+            title: 文档标题
+            content_hash: 内容哈希
+            created_at: 创建时间
+            modified_at: 修改时间
+        """
+        self.conn.execute(
+            """
+            INSERT INTO documents (collection, path, title, hash, created_at, modified_at, active)
+            VALUES (?, ?, ?, ?, ?, ?, 1)
+            ON CONFLICT(collection, path) DO UPDATE SET
+                title = excluded.title,
+                hash = excluded.hash,
+                modified_at = excluded.modified_at,
+                active = 1
+            """,
+            (collection, path, title, content_hash, created_at, modified_at),
+        )
+        self.conn.commit()
+
+    def find_active_document(
+        self, collection: str, path: str
+    ) -> dict[str, Any] | None:
+        """查找活跃文档
+
+        Args:
+            collection: 集合名称
+            path: 文档路径
+
+        Returns:
+            文档字典（包含 id, hash, title）或 None
+        """
+        row = self.conn.execute(
+            "SELECT id, hash, title FROM documents WHERE collection = ? AND path = ? AND active = 1",
+            (collection, path),
+        ).fetchone()
+
+        if row:
+            return {"id": row["id"], "hash": row["hash"], "title": row["title"]}
+        return None
+
+    def update_document_title(
+        self, document_id: int, title: str, modified_at: str
+    ) -> None:
+        """更新文档标题
+
+        Args:
+            document_id: 文档 ID
+            title: 新标题
+            modified_at: 修改时间
+        """
+        self.conn.execute(
+            "UPDATE documents SET title = ?, modified_at = ? WHERE id = ?",
+            (title, modified_at, document_id),
+        )
+        self.conn.commit()
+
+    def update_document(
+        self, document_id: int, title: str, content_hash: str, modified_at: str
+    ) -> None:
+        """更新文档（hash + title）
+
+        Args:
+            document_id: 文档 ID
+            title: 新标题
+            content_hash: 新内容哈希
+            modified_at: 修改时间
+        """
+        self.conn.execute(
+            "UPDATE documents SET title = ?, hash = ?, modified_at = ? WHERE id = ?",
+            (title, content_hash, modified_at, document_id),
+        )
+        self.conn.commit()
+
+    def deactivate_document(self, collection: str, path: str) -> None:
+        """停用文档（标记为 inactive）
+
+        Args:
+            collection: 集合名称
+            path: 文档路径
+        """
+        self.conn.execute(
+            "UPDATE documents SET active = 0 WHERE collection = ? AND path = ? AND active = 1",
+            (collection, path),
+        )
+        self.conn.commit()
+
+    def get_active_document_paths(self, collection: str) -> list[str]:
+        """获取集合中所有活跃文档路径
+
+        Args:
+            collection: 集合名称
+
+        Returns:
+            路径列表
+        """
+        rows = self.conn.execute(
+            "SELECT path FROM documents WHERE collection = ? AND active = 1",
+            (collection,),
+        ).fetchall()
+        return [row["path"] for row in rows]
+
+    def get_document_count(self, collection: str) -> int:
+        """获取集合中活跃文档数量
+
+        Args:
+            collection: 集合名称
+
+        Returns:
+            文档数量
+        """
+        row = self.conn.execute(
+            "SELECT COUNT(*) as cnt FROM documents WHERE collection = ? AND active = 1",
+            (collection,),
+        ).fetchone()
+        return row["cnt"] if row else 0
+
+    # === Embedding 操作 ===
+
+    def insert_embedding(
+        self,
+        content_hash: str,
+        seq: int,
+        pos: int,
+        embedding: list[float],
+        model: str,
+        embedded_at: str,
+    ) -> None:
+        """插入 embedding
+
+        插入到 content_vectors 和 vectors_vec 两张表。
+
+        Args:
+            content_hash: 内容哈希
+            seq: chunk 序号
+            pos: chunk 在文档中的位置
+            embedding: 向量（float 列表）
+            model: 模型名称
+            embedded_at: 生成时间
+        """
+        import struct
+
+        hash_seq = f"{content_hash}_{seq}"
+
+        # 插入 content_vectors
+        self.conn.execute(
+            "INSERT OR REPLACE INTO content_vectors (hash, seq, pos, model, embedded_at) VALUES (?, ?, ?, ?, ?)",
+            (content_hash, seq, pos, model, embedded_at),
+        )
+
+        # 将 list[float] 转换为字节（sqlite-vec 需要 blob）
+        embedding_bytes = struct.pack(f"{len(embedding)}f", *embedding)
+
+        # 插入 vectors_vec
+        self.conn.execute(
+            "INSERT OR REPLACE INTO vectors_vec (hash_seq, embedding) VALUES (?, ?)",
+            (hash_seq, embedding_bytes),
+        )
+
+        self.conn.commit()
+
+    def get_hashes_for_embedding(self) -> list[dict[str, Any]]:
+        """获取需要 embedding 的 content hash
+
+        返回所有活跃文档中，尚未生成 embedding 的 content。
+
+        Returns:
+            字典列表，每个包含 hash、content、path
+        """
+        rows = self.conn.execute(
+            """
+            SELECT DISTINCT c.hash, c.doc as content, d.path
+            FROM content c
+            JOIN documents d ON c.hash = d.hash
+            LEFT JOIN content_vectors cv ON c.hash = cv.hash
+            WHERE d.active = 1 AND cv.hash IS NULL
+            """
+        ).fetchall()
+
+        return [
+            {"hash": row["hash"], "content": row["content"], "path": row["path"]}
+            for row in rows
+        ]
+
+    def clear_all_embeddings(self) -> None:
+        """清空所有 embedding（强制重新生成）"""
+        self.conn.execute("DELETE FROM content_vectors")
+        self.conn.execute("DELETE FROM vectors_vec")
+        self.conn.commit()
+
+    # === 清理操作 ===
+
+    def cleanup_orphaned_content(self) -> int:
+        """清理孤立的 content（没有任何活跃文档引用）
+
+        Returns:
+            删除的 content 数量
+        """
+        cursor = self.conn.execute(
+            """
+            DELETE FROM content
+            WHERE hash NOT IN (
+                SELECT DISTINCT hash FROM documents WHERE active = 1
+            )
+            """
+        )
+        self.conn.commit()
+        return cursor.rowcount
