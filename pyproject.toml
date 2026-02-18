@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qmd-py"
+version = "0.1.0"
+description = "基于 RAG 的智能文档查询系统"
+requires-python = ">=3.11"
+dependencies = [
+    "sqlite-vec",
+    "PyYAML",
+    "pydantic",
+    "loguru",
+]
+
+[project.optional-dependencies]
+mvp = [
+    "sentence-transformers",
+    "FlagEmbedding",
+    "llama-cpp-python",
+    "torch",
+]
+mcp = [
+    "mcp",
+]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+]
+
+[project.scripts]
+qmd-py = "qmd.__main__:main"
