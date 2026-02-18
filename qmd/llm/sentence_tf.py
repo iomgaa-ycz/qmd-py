@@ -5,7 +5,7 @@ sentence-transformers MVP 嵌入后端
 这是 MVP 阶段的实现，无需下载 GGUF 模型即可运行。
 
 特性：
-- 使用 HuggingFace 模型（默认 all-MiniLM-L6-v2，384 维）
+- 使用 HuggingFace 模型（默认 paraphrase-multilingual-MiniLM-L12-v2，384 维，支持中英双语）
 - 支持批量嵌入
 - 基于余弦相似度的 reranking
 - 简化的 query expansion（无 LLM 生成能力）
@@ -37,14 +37,14 @@ class SentenceTransformerBackend(LLMBackend):
 
     def __init__(
         self,
-        model_name: str = "all-MiniLM-L6-v2",
+        model_name: str = "paraphrase-multilingual-MiniLM-L12-v2",
         device: str | None = None,
     ):
         """
         初始化 sentence-transformers 后端
 
         Args:
-            model_name: HuggingFace 模型名称（默认 all-MiniLM-L6-v2）
+            model_name: HuggingFace 模型名称（默认 paraphrase-multilingual-MiniLM-L12-v2，支持中英双语）
             device: 设备类型（"cuda", "mps", "cpu" 或 None 自动检测）
         """
         self.model_name = model_name

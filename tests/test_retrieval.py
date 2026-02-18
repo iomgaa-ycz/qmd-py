@@ -155,7 +155,7 @@ class TestVectorSearch:
     @pytest.fixture(scope="class")
     def llm_backend(self) -> SentenceTransformerBackend:
         """创建 LLM 后端（使用真实模型）"""
-        return SentenceTransformerBackend(model_name="all-MiniLM-L6-v2", device="cpu")
+        return SentenceTransformerBackend(model_name="paraphrase-multilingual-MiniLM-L12-v2", device="cpu")
 
     @pytest.fixture
     def tmp_db(self, tmp_path: Path) -> Database:
@@ -431,7 +431,7 @@ class TestSearch:
     @pytest.fixture(scope="class")
     def llm_backend(self) -> SentenceTransformerBackend:
         """创建 LLM 后端"""
-        return SentenceTransformerBackend(model_name="all-MiniLM-L6-v2", device="cpu")
+        return SentenceTransformerBackend(model_name="paraphrase-multilingual-MiniLM-L12-v2", device="cpu")
 
     @pytest.fixture
     def tmp_db(self, tmp_path: Path) -> Database:

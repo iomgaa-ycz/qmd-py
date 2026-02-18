@@ -299,9 +299,9 @@ class TestStore:
         """
         创建 LLM 后端（使用真实模型）
 
-        使用 all-MiniLM-L6-v2 (384 维，约 90MB)
+        使用 paraphrase-multilingual-MiniLM-L12-v2 (384 维，支持中英双语)
         """
-        return SentenceTransformerBackend(model_name="all-MiniLM-L6-v2", device="cpu")
+        return SentenceTransformerBackend(model_name="paraphrase-multilingual-MiniLM-L12-v2", device="cpu")
 
     def test_embed_documents_basic(
         self,
