@@ -31,3 +31,7 @@ dev = [
 
 [project.scripts]
 qmd-py = "qmd.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["qmd*"]
+exclude = ["reference*", "tests*"]
