@@ -1,0 +1,12 @@
+reference/
+implementation_plan.md
+__pycache__/
+*.pyc
+.pytest_cache/
+dist/
+*.egg-info/
+.eggs/
+.venv/
+venv/
+*.log
+.DS_Store
