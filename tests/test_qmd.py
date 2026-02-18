@@ -13,6 +13,13 @@ from qmd import QMD, NamedCollection
 class TestQMD:
     """QMD 门面类测试"""
 
+    @pytest.fixture(autouse=True)
+    def isolate_config(self, tmp_path: Path, monkeypatch):
+        """隔离配置环境，防止测试污染全局配置"""
+        config_dir = tmp_path / "qmd_config"
+        config_dir.mkdir()
+        monkeypatch.setenv("QMD_CONFIG_DIR", str(config_dir))
+
     @pytest.fixture
     def tmp_docs(self, tmp_path: Path) -> Path:
         """创建临时文档目录"""

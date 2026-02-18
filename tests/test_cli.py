@@ -334,7 +334,7 @@ class TestCLI:
         assert "Collections:" in captured.out
 
     def test_serve_command(self, tmp_path: Path, capsys):
-        """测试 serve 命令（占位）"""
+        """测试 serve 命令"""
         db_path = tmp_path / "test.db"
 
         with mock.patch.object(
@@ -342,9 +342,11 @@ class TestCLI:
         ):
             exit_code = main()
 
+        # serve 命令会因为 stdio 不可用而失败，返回 1
         assert exit_code == 1
         captured = capsys.readouterr()
-        assert "Phase 5" in captured.out or "占位" in captured.out or "实现" in captured.out
+        # 检查启动消息
+        assert "MCP 服务器" in captured.out or "stdio" in captured.out
 
     def test_verbose_flag(self, tmp_path: Path, capsys):
         """测试 --verbose 标志"""
