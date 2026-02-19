@@ -15,7 +15,6 @@ from qmd.core.document import (
     get_index_health,
     get_status,
     is_docid,
-    levenshtein,
     match_files_by_glob,
     normalize_docid,
     vacuum_database,
@@ -99,43 +98,18 @@ class TestDocidFunctions:
         assert result is None
 
 
-class TestLevenshtein:
-    """测试 Levenshtein 距离计算"""
-
-    def test_levenshtein_identical(self):
-        """测试相同字符串"""
-        assert levenshtein("hello", "hello") == 0
-
-    def test_levenshtein_one_edit(self):
-        """测试单个编辑"""
-        assert levenshtein("hello", "hallo") == 1  # 替换
-        assert levenshtein("hello", "helo") == 1   # 删除
-        assert levenshtein("hello", "helllo") == 1 # 插入
-
-    def test_levenshtein_multiple_edits(self):
-        """测试多个编辑"""
-        assert levenshtein("kitten", "sitting") == 3
-        assert levenshtein("abc", "xyz") == 3
-
-    def test_levenshtein_empty_strings(self):
-        """测试空字符串"""
-        assert levenshtein("", "") == 0
-        assert levenshtein("hello", "") == 5
-        assert levenshtein("", "world") == 5
-
-
 class TestFileFinding:
     """测试文件查找函数"""
 
     def test_find_similar_files(self, test_db: Database):
-        """测试相似文件查找"""
+        """测试相似文件查找（使用 difflib 相似度）"""
         # 查找与 "file1.md" 相似的文件
-        results = find_similar_files(test_db, "file1.md", max_distance=2, limit=5)
+        results = find_similar_files(test_db, "file1.md", min_similarity=0.5, limit=5)
         assert "file1.md" in results
         assert "file2.md" in results
 
         # 查找与 "note" 相似的文件
-        results = find_similar_files(test_db, "note", max_distance=5, limit=5)
+        results = find_similar_files(test_db, "note", min_similarity=0.3, limit=5)
         assert "note.md" in results
 
     def test_match_files_by_glob(self, test_db: Database):

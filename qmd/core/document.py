@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import difflib
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -104,60 +105,23 @@ def find_document_by_docid(
 # =============================================================================
 
 
-def levenshtein(s1: str, s2: str) -> int:
-    """
-    计算两个字符串的 Levenshtein 距离
-
-    Args:
-        s1: 第一个字符串
-        s2: 第二个字符串
-
-    Returns:
-        编辑距离
-    """
-    m, n = len(s1), len(s2)
-
-    # 初始化 DP 表
-    dp = [[0] * (n + 1) for _ in range(m + 1)]
-
-    # 初始化边界
-    for i in range(m + 1):
-        dp[i][0] = i
-    for j in range(n + 1):
-        dp[0][j] = j
-
-    # 填充 DP 表
-    for i in range(1, m + 1):
-        for j in range(1, n + 1):
-            if s1[i - 1] == s2[j - 1]:
-                dp[i][j] = dp[i - 1][j - 1]
-            else:
-                dp[i][j] = 1 + min(
-                    dp[i - 1][j],      # 删除
-                    dp[i][j - 1],      # 插入
-                    dp[i - 1][j - 1]   # 替换
-                )
-
-    return dp[m][n]
-
-
 def find_similar_files(
     db: Database,
     query: str,
-    max_distance: int = 3,
+    min_similarity: float = 0.6,
     limit: int = 5
 ) -> list[str]:
     """
-    查找与查询字符串相似的文件路径（Levenshtein 距离）
+    查找与查询字符串相似的文件路径（使用 difflib 相似度）
 
     Args:
         db: 数据库实例
         query: 查询字符串
-        max_distance: 最大编辑距离
+        min_similarity: 最小相似度（0.0-1.0），默认 0.6
         limit: 返回结果数量限制
 
     Returns:
-        相似文件路径列表（按编辑距离升序）
+        相似文件路径列表（按相似度降序）
     """
     # 获取所有文档路径
     rows = db.conn.execute(
@@ -166,16 +130,16 @@ def find_similar_files(
 
     query_lower = query.lower()
 
-    # 计算编辑距离并排序
+    # 计算相似度并排序
     scored = []
     for row in rows:
         path = row["path"]
-        dist = levenshtein(path.lower(), query_lower)
-        if dist <= max_distance:
-            scored.append({"path": path, "dist": dist})
+        similarity = difflib.SequenceMatcher(None, path.lower(), query_lower).ratio()
+        if similarity >= min_similarity:
+            scored.append({"path": path, "similarity": similarity})
 
-    # 按距离排序并限制数量
-    scored.sort(key=lambda x: x["dist"])
+    # 按相似度降序排序并限制数量
+    scored.sort(key=lambda x: x["similarity"], reverse=True)
     return [item["path"] for item in scored[:limit]]
 
 
