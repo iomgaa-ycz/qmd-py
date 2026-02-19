@@ -157,36 +157,6 @@ def handelize(path: str) -> str:
     return normalized
 
 
-def extract_title(content: str, filename: str) -> str:
-    """
-    从文档内容中提取标题
-
-    优先级：
-    1. 第一个 H1 标题 (# Title)
-    2. 文件名（去掉扩展名）
-
-    Args:
-        content: 文档内容
-        filename: 文件名或路径
-
-    Returns:
-        文档标题
-
-    Examples:
-        >>> extract_title("# My Document\\n\\nContent", "doc.md")
-        "My Document"
-        >>> extract_title("No heading here", "report.md")
-        "report"
-    """
-    # 尝试提取第一个 H1 标题
-    match = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
-    if match:
-        return match.group(1).strip()
-
-    # 使用文件名（去掉扩展名）
-    return Path(filename).stem
-
-
 def get_file_stats(file_path: str) -> dict[str, str]:
     """
     获取文件统计信息
