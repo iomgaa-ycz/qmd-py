@@ -82,6 +82,8 @@ def cmd_update(args: argparse.Namespace) -> int:
 
 def cmd_search(args: argparse.Namespace) -> int:
     """搜索文档"""
+    from qmd.cli.formatter import format_search_results
+
     qmd = QMD(backend=args.backend, db_path=args.db)
     try:
         collections = [args.collection] if args.collection else None
@@ -91,18 +93,44 @@ def cmd_search(args: argparse.Namespace) -> int:
             print("未找到匹配的文档")
             return 0
 
-        print(f"找到 {len(results)} 个结果:\n")
-        for i, result in enumerate(results, 1):
-            print(f"{i}. {result.collection}/{result.file}")
-            print(f"   分数: {result.score:.3f}")
-            print(f"   标题: {result.title}")
+        # 使用 formatter 输出
+        output_format = getattr(args, "format", "cli")
+        if output_format and output_format != "cli":
+            # 转换为 dict
+            results_dict = [
+                {
+                    "file": r.file,
+                    "title": r.title,
+                    "body": r.body,
+                    "score": r.score,
+                    "collection": r.collection,
+                    "hash": r.hash,
+                    "pos": r.pos,
+                    "context": r.context,
+                }
+                for r in results
+            ]
+            opts = {
+                "query": args.query,
+                "full": getattr(args, "full", False),
+                "line_numbers": getattr(args, "line_numbers", False),
+            }
+            output = format_search_results(results_dict, output_format, opts)
+            print(output)
+        else:
+            # CLI 格式（原有逻辑）
+            print(f"找到 {len(results)} 个结果:\n")
+            for i, result in enumerate(results, 1):
+                print(f"{i}. {result.collection}/{result.file}")
+                print(f"   分数: {result.score:.3f}")
+                print(f"   标题: {result.title}")
 
-            # 显示摘要（前 200 个字符）
-            snippet = result.body[:200].replace("\n", " ")
-            if len(result.body) > 200:
-                snippet += "..."
-            print(f"   摘要: {snippet}")
-            print()
+                # 显示摘要（前 200 个字符）
+                snippet = result.body[:200].replace("\n", " ")
+                if len(result.body) > 200:
+                    snippet += "..."
+                print(f"   摘要: {snippet}")
+                print()
 
         return 0
     finally:
@@ -216,6 +244,8 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 def cmd_query(args: argparse.Namespace) -> int:
     """深度搜索（hybrid + rerank）"""
+    from qmd.cli.formatter import format_search_results
+
     qmd = QMD(backend=args.backend, db_path=args.db)
     try:
         collections = [args.collection] if args.collection else None
@@ -228,18 +258,44 @@ def cmd_query(args: argparse.Namespace) -> int:
             print("未找到匹配的文档")
             return 0
 
-        print(f"找到 {len(results)} 个结果:\n")
-        for i, result in enumerate(results, 1):
-            print(f"{i}. {result.collection}/{result.file}")
-            print(f"   分数: {result.score:.3f}")
-            print(f"   标题: {result.title}")
+        # 使用 formatter 输出
+        output_format = getattr(args, "format", "cli")
+        if output_format and output_format != "cli":
+            # 转换为 dict
+            results_dict = [
+                {
+                    "file": r.file,
+                    "title": r.title,
+                    "body": r.body,
+                    "score": r.score,
+                    "collection": r.collection,
+                    "hash": r.hash,
+                    "pos": r.pos,
+                    "context": r.context,
+                }
+                for r in results
+            ]
+            opts = {
+                "query": args.query,
+                "full": getattr(args, "full", False),
+                "line_numbers": getattr(args, "line_numbers", False),
+            }
+            output = format_search_results(results_dict, output_format, opts)
+            print(output)
+        else:
+            # CLI 格式（原有逻辑）
+            print(f"找到 {len(results)} 个结果:\n")
+            for i, result in enumerate(results, 1):
+                print(f"{i}. {result.collection}/{result.file}")
+                print(f"   分数: {result.score:.3f}")
+                print(f"   标题: {result.title}")
 
-            # 显示摘要（前 200 个字符）
-            snippet = result.body[:200].replace("\n", " ")
-            if len(result.body) > 200:
-                snippet += "..."
-            print(f"   摘要: {snippet}")
-            print()
+                # 显示摘要（前 200 个字符）
+                snippet = result.body[:200].replace("\n", " ")
+                if len(result.body) > 200:
+                    snippet += "..."
+                print(f"   摘要: {snippet}")
+                print()
 
         return 0
     finally:
@@ -416,6 +472,108 @@ def cmd_version(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ls(args: argparse.Namespace) -> int:
+    """列出 collections 或文件"""
+    from qmd.core.config import list_collections
+
+    qmd = QMD(backend=args.backend, db_path=args.db)
+    try:
+        path_arg = getattr(args, "path", None)
+
+        if not path_arg:
+            # 列出所有 collections
+            collections = list_collections()
+            if not collections:
+                print("没有 collection。运行 'qmd add' 来索引文件。")
+                return 0
+
+            print("Collections:\n")
+            for coll in collections:
+                count = qmd.store.get_document_count(coll.name)
+                print(f"  qmd://{coll.name}/  ({count} 个文件)")
+            return 0
+        else:
+            # 列出指定 collection 的文件
+            # 简化实现：只支持 collection 名称
+            collection_name = path_arg.replace("qmd://", "").rstrip("/")
+            docs = qmd.db.conn.execute(
+                """
+                SELECT d.path, d.title, d.modified_at, LENGTH(c.doc) as size
+                FROM documents d
+                JOIN content c ON d.hash = c.hash
+                WHERE d.collection = ? AND d.active = 1
+                ORDER BY d.path
+                """,
+                (collection_name,),
+            ).fetchall()
+
+            if not docs:
+                print(f"Collection '{collection_name}' 为空或不存在")
+                return 0
+
+            print(f"qmd://{collection_name}/  ({len(docs)} 个文件):\n")
+            for doc in docs:
+                print(f"  {doc['path']}  ({doc['size']} bytes)")
+            return 0
+    finally:
+        qmd.stop()
+
+
+def cmd_cleanup(args: argparse.Namespace) -> int:
+    """清理数据库"""
+    from qmd.core.document import cleanup_orphaned_vectors, delete_inactive_documents, vacuum_database
+
+    qmd = QMD(backend=args.backend, db_path=args.db)
+    try:
+        print("清理孤立向量...")
+        deleted_vectors = cleanup_orphaned_vectors(qmd.db)
+        print(f"  删除 {deleted_vectors} 个孤立向量")
+
+        print("删除 inactive 文档...")
+        deleted_docs = delete_inactive_documents(qmd.db)
+        print(f"  删除 {deleted_docs} 个文档")
+
+        print("压缩数据库...")
+        vacuum_database(qmd.db)
+        print("  ✓ VACUUM 完成")
+
+        print("\n清理完成")
+        return 0
+    finally:
+        qmd.stop()
+
+
+def cmd_collection_rename(args: argparse.Namespace) -> int:
+    """重命名 collection"""
+    from qmd.core.config import rename_collection
+
+    qmd = QMD(backend=args.backend, db_path=args.db)
+    try:
+        old_name = args.old_name
+        new_name = args.new_name
+
+        # 重命名配置
+        success = rename_collection(old_name, new_name)
+        if not success:
+            print(f"✗ Collection 不存在: {old_name}", file=sys.stderr)
+            return 1
+
+        # 更新数据库中的 collection 名称
+        qmd.db.conn.execute(
+            "UPDATE documents SET collection = ? WHERE collection = ?",
+            (new_name, old_name),
+        )
+        qmd.db.conn.commit()
+
+        print(f"✓ 已重命名 collection: {old_name} → {new_name}")
+        return 0
+    except ValueError as e:
+        print(f"✗ {e}", file=sys.stderr)
+        return 1
+    finally:
+        qmd.stop()
+
+
 def create_parser() -> argparse.ArgumentParser:
     """创建命令行参数解析器"""
     parser = argparse.ArgumentParser(
@@ -482,6 +640,22 @@ def create_parser() -> argparse.ArgumentParser:
         default=10,
         help="返回结果数量 (默认: 10)",
     )
+    parser_search.add_argument(
+        "--format",
+        choices=["cli", "json", "csv", "xml", "md", "files"],
+        default="cli",
+        help="输出格式 (默认: cli)",
+    )
+    parser_search.add_argument(
+        "--full",
+        action="store_true",
+        help="显示完整文档内容",
+    )
+    parser_search.add_argument(
+        "--line-numbers",
+        action="store_true",
+        help="显示行号",
+    )
 
     # list
     subparsers.add_parser("list", help="列出所有 collections")
@@ -515,6 +689,22 @@ def create_parser() -> argparse.ArgumentParser:
         default=10,
         help="返回结果数量 (默认: 10)",
     )
+    parser_query.add_argument(
+        "--format",
+        choices=["cli", "json", "csv", "xml", "md", "files"],
+        default="cli",
+        help="输出格式 (默认: cli)",
+    )
+    parser_query.add_argument(
+        "--full",
+        action="store_true",
+        help="显示完整文档内容",
+    )
+    parser_query.add_argument(
+        "--line-numbers",
+        action="store_true",
+        help="显示行号",
+    )
 
     # get
     parser_get = subparsers.add_parser("get", help="获取文档内容")
@@ -539,6 +729,12 @@ def create_parser() -> argparse.ArgumentParser:
         "-n",
         action="store_true",
         help="显示行号",
+    )
+    parser_get.add_argument(
+        "--format",
+        choices=["cli", "json", "md", "xml"],
+        default="cli",
+        help="输出格式 (默认: cli)",
     )
 
     # embed
@@ -567,6 +763,39 @@ def create_parser() -> argparse.ArgumentParser:
     parser_context_remove = context_subparsers.add_parser("remove", help="删除上下文")
     parser_context_remove.add_argument("collection", help="Collection 名称")
     parser_context_remove.add_argument("path_prefix", help="路径前缀")
+
+    # ls
+    parser_ls = subparsers.add_parser("ls", help="列出 collections 或文件")
+    parser_ls.add_argument(
+        "path",
+        nargs="?",
+        help="Collection 名称或路径 (可选)",
+    )
+
+    # cleanup
+    subparsers.add_parser("cleanup", help="清理数据库（删除孤立向量和 inactive 文档）")
+
+    # collection 子命令组
+    parser_coll = subparsers.add_parser("collection", help="管理 collections")
+    coll_subparsers = parser_coll.add_subparsers(dest="coll_command", help="collection 子命令")
+
+    # collection add (已有)
+    coll_add = coll_subparsers.add_parser("add", help="添加 collection")
+    coll_add.add_argument("name", help="Collection 名称")
+    coll_add.add_argument("path", help="Collection 路径")
+    coll_add.add_argument("--pattern", default="**/*.md", help="Glob pattern")
+
+    # collection remove (已有)
+    coll_remove = coll_subparsers.add_parser("remove", help="删除 collection")
+    coll_remove.add_argument("name", help="Collection 名称")
+
+    # collection rename (新增)
+    coll_rename = coll_subparsers.add_parser("rename", help="重命名 collection")
+    coll_rename.add_argument("old_name", help="旧名称")
+    coll_rename.add_argument("new_name", help="新名称")
+
+    # collection list (已有，保持向后兼容)
+    coll_subparsers.add_parser("list", help="列出所有 collections")
 
     # version
     subparsers.add_parser("version", help="显示版本号")
@@ -607,6 +836,27 @@ def main() -> int:
                 print(f"✗ 错误: {e}", file=sys.stderr)
                 return 1
 
+    # 特殊处理 collection 子命令
+    if args.command == "collection":
+        if not hasattr(args, "coll_command") or not args.coll_command:
+            print("✗ 请指定 collection 子命令: add, remove, list, rename", file=sys.stderr)
+            return 1
+
+        collection_commands = {
+            "add": cmd_add,
+            "remove": cmd_remove,
+            "list": cmd_list,
+            "rename": cmd_collection_rename,
+        }
+        handler = collection_commands.get(args.coll_command)
+        if handler:
+            try:
+                return handler(args)
+            except Exception as e:
+                logger.exception(f"命令执行失败: {e}")
+                print(f"✗ 错误: {e}", file=sys.stderr)
+                return 1
+
     # 路由到对应的命令处理函数
     commands = {
         "add": cmd_add,
@@ -621,6 +871,8 @@ def main() -> int:
         "get": cmd_get,
         "embed": cmd_embed,
         "version": cmd_version,
+        "ls": cmd_ls,
+        "cleanup": cmd_cleanup,
     }
 
     handler = commands.get(args.command)
