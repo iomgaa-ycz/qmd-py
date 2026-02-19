@@ -6,6 +6,7 @@
 
 import os
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -221,3 +222,139 @@ def get_file_stats(file_path: str) -> dict[str, str]:
         logger.warning(f"获取文件统计信息失败: {file_path} - {e}")
         now = datetime.now(timezone.utc).isoformat()
         return {"created_at": now, "modified_at": now}
+
+
+# ==============================================================================
+# VirtualPath 系统 — qmd://collection/path URI 支持
+# ==============================================================================
+
+
+@dataclass
+class VirtualPath:
+    """解析后的虚拟路径
+
+    Attributes:
+        collection_name: 集合名称
+        path: 集合内的相对路径
+    """
+
+    collection_name: str
+    path: str
+
+
+def normalize_virtual_path(input_str: str) -> str:
+    """规范化虚拟路径（去空格、统一前缀）
+
+    Args:
+        input_str: 虚拟路径字符串
+
+    Returns:
+        规范化后的虚拟路径
+    """
+    # 去除前后空格
+    normalized = input_str.strip()
+
+    # 确保有 qmd:// 前缀
+    if not normalized.startswith("qmd://"):
+        if normalized.startswith("//"):
+            normalized = "qmd:" + normalized
+        else:
+            normalized = "qmd://" + normalized
+
+    return normalized
+
+
+def parse_virtual_path(virtual_path: str) -> VirtualPath | None:
+    """解析 qmd://collection/path 格式
+
+    Args:
+        virtual_path: 虚拟路径字符串
+
+    Returns:
+        VirtualPath 对象，如果格式无效返回 None
+
+    Examples:
+        >>> parse_virtual_path("qmd://notes/file.md")
+        VirtualPath(collection_name='notes', path='file.md')
+        >>> parse_virtual_path("qmd://docs/subfolder/file.md")
+        VirtualPath(collection_name='docs', path='subfolder/file.md')
+        >>> parse_virtual_path("invalid")
+        None
+    """
+    if not virtual_path or not isinstance(virtual_path, str):
+        return None
+
+    # 只处理以 qmd:// 开头的路径（避免误判其他协议）
+    stripped = virtual_path.strip()
+    if not stripped.startswith("qmd://"):
+        return None
+
+    # 规范化
+    normalized = normalize_virtual_path(virtual_path)
+
+    # 移除 qmd:// 前缀
+    if not normalized.startswith("qmd://"):
+        return None
+
+    remainder = normalized[6:]  # 去掉 "qmd://"
+
+    # 至少需要 collection/path 格式
+    if not remainder or "/" not in remainder:
+        return None
+
+    # 分割 collection 和 path
+    parts = remainder.split("/", 1)
+    if len(parts) != 2:
+        return None
+
+    collection_name, path = parts
+
+    if not collection_name or not path:
+        return None
+
+    return VirtualPath(collection_name=collection_name, path=path)
+
+
+def build_virtual_path(collection_name: str, path: str) -> str:
+    """构建 qmd://collection/path 格式
+
+    Args:
+        collection_name: 集合名称
+        path: 集合内的相对路径
+
+    Returns:
+        虚拟路径字符串
+
+    Examples:
+        >>> build_virtual_path("notes", "file.md")
+        'qmd://notes/file.md'
+        >>> build_virtual_path("docs", "subfolder/file.md")
+        'qmd://docs/subfolder/file.md'
+    """
+    # 移除 path 开头的斜杠（如果有）
+    clean_path = path.lstrip("/")
+
+    return f"qmd://{collection_name}/{clean_path}"
+
+
+def is_virtual_path(path: str) -> bool:
+    """判断是否为 qmd:// 格式
+
+    Args:
+        path: 路径字符串
+
+    Returns:
+        True 如果是虚拟路径格式
+
+    Examples:
+        >>> is_virtual_path("qmd://notes/file.md")
+        True
+        >>> is_virtual_path("/absolute/path/file.md")
+        False
+        >>> is_virtual_path("relative/path.md")
+        False
+    """
+    if not path or not isinstance(path, str):
+        return False
+
+    return path.strip().startswith("qmd://")

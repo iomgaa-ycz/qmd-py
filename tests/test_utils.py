@@ -12,9 +12,14 @@ import pytest
 
 from qmd.utils.hashing import content_hash, file_hash, get_docid
 from qmd.utils.paths import (
+    VirtualPath,
+    build_virtual_path,
     get_config_dir,
     get_data_dir,
+    is_virtual_path,
     normalize_path,
+    normalize_virtual_path,
+    parse_virtual_path,
     resolve_doc_path,
 )
 from qmd.utils.snippet import extract_snippet, extract_title
@@ -496,3 +501,68 @@ class TestEdgeCases:
         hash_value = content_hash(large_text)
         assert isinstance(hash_value, str)
         assert len(hash_value) == 64
+
+
+# =============================================================================
+# VirtualPath 测试
+# =============================================================================
+
+
+class TestVirtualPath:
+    """VirtualPath 系统测试"""
+
+    def test_parse_virtual_path_valid(self):
+        """测试正常解析虚拟路径"""
+        result = parse_virtual_path("qmd://notes/file.md")
+        assert isinstance(result, VirtualPath)
+        assert result.collection_name == "notes"
+        assert result.path == "file.md"
+
+        # 带子目录
+        result2 = parse_virtual_path("qmd://docs/subfolder/file.md")
+        assert result2.collection_name == "docs"
+        assert result2.path == "subfolder/file.md"
+
+    def test_parse_virtual_path_invalid(self):
+        """测试各种无效格式返回 None"""
+        assert parse_virtual_path("") is None
+        assert parse_virtual_path(None) is None
+        assert parse_virtual_path("qmd://") is None
+        assert parse_virtual_path("qmd://notes") is None  # 缺少 /path
+        assert parse_virtual_path("http://example.com") is None
+        assert parse_virtual_path("/absolute/path") is None
+        assert parse_virtual_path("relative/path.md") is None
+
+    def test_build_virtual_path(self):
+        """测试构建虚拟路径"""
+        path = build_virtual_path("notes", "file.md")
+        assert path == "qmd://notes/file.md"
+
+        # 带子目录
+        path2 = build_virtual_path("docs", "subfolder/file.md")
+        assert path2 == "qmd://docs/subfolder/file.md"
+
+        # path 开头有斜杠会被清理
+        path3 = build_virtual_path("notes", "/file.md")
+        assert path3 == "qmd://notes/file.md"
+
+    def test_is_virtual_path(self):
+        """测试判断虚拟路径"""
+        assert is_virtual_path("qmd://notes/file.md") is True
+        assert is_virtual_path("  qmd://notes/file.md  ") is True  # 空格会被 strip
+        assert is_virtual_path("/absolute/path") is False
+        assert is_virtual_path("relative/path.md") is False
+        assert is_virtual_path("") is False
+        assert is_virtual_path(None) is False
+
+    def test_normalize_virtual_path(self):
+        """测试规范化虚拟路径"""
+        # 去除空格
+        assert normalize_virtual_path("  qmd://notes/file.md  ") == "qmd://notes/file.md"
+
+        # 补齐前缀
+        assert normalize_virtual_path("notes/file.md") == "qmd://notes/file.md"
+        assert normalize_virtual_path("//notes/file.md") == "qmd://notes/file.md"
+
+        # 已经正确的格式
+        assert normalize_virtual_path("qmd://notes/file.md") == "qmd://notes/file.md"
