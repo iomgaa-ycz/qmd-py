@@ -462,3 +462,69 @@ class Database:
         )
         self.conn.commit()
         return cursor.rowcount
+
+    # === LLM Cache 操作 ===
+
+    def get_cached_result(self, cache_key: str) -> str | None:
+        """从 llm_cache 表读取缓存结果
+
+        Args:
+            cache_key: 缓存键（SHA-256 hash）
+
+        Returns:
+            缓存的结果字符串，如果不存在返回 None
+        """
+        row = self.conn.execute(
+            "SELECT result FROM llm_cache WHERE hash = ?", (cache_key,)
+        ).fetchone()
+        return row["result"] if row else None
+
+    def set_cached_result(self, cache_key: str, result: str) -> None:
+        """写入缓存结果到 llm_cache 表
+
+        Args:
+            cache_key: 缓存键（SHA-256 hash）
+            result: 要缓存的结果字符串
+        """
+        from datetime import datetime, timezone
+
+        self.conn.execute(
+            "INSERT OR REPLACE INTO llm_cache (hash, result, created_at) VALUES (?, ?, ?)",
+            (cache_key, result, datetime.now(timezone.utc).isoformat()),
+        )
+        self.conn.commit()
+
+    def clear_cache(self) -> int:
+        """清空所有缓存
+
+        Returns:
+            删除的缓存条目数
+        """
+        cursor = self.conn.execute("DELETE FROM llm_cache")
+        self.conn.commit()
+        return cursor.rowcount
+
+
+# ---------------------------------------------------------------------------
+# LLM Cache 工具函数
+# ---------------------------------------------------------------------------
+
+
+def get_cache_key(operation: str, params: dict[str, Any]) -> str:
+    """生成缓存 key（SHA-256 hash of operation + sorted params JSON）
+
+    参考原版 getCacheKey():
+    - key = SHA-256(operation + JSON.stringify(params, sorted keys))
+
+    Args:
+        operation: 操作名称（如 "expandQuery", "rerank"）
+        params: 参数字典
+
+    Returns:
+        SHA-256 hash 字符串（64 个十六进制字符）
+    """
+    import hashlib
+    import json
+
+    raw = operation + json.dumps(params, sort_keys=True)
+    return hashlib.sha256(raw.encode()).hexdigest()

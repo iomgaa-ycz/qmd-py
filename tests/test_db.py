@@ -5,8 +5,10 @@ import sqlite3
 import pytest
 
 from qmd.core.db import (
+    Database,
     ensure_db_dir,
     ensure_vec_table,
+    get_cache_key,
     get_db_path,
     init_schema,
     open_database,
@@ -172,3 +174,68 @@ class TestPaths:
         d = Path(str(tmp_path)) / "test_qmd"
         ensure_db_dir(d)
         assert d.exists()
+
+
+class TestLLMCache:
+    """LLM Cache 功能测试。"""
+
+    def test_get_cache_key_deterministic(self) -> None:
+        """相同参数生成相同 cache key。"""
+        params = {"query": "test query", "limit": 10}
+        key1 = get_cache_key("expandQuery", params)
+        key2 = get_cache_key("expandQuery", params)
+        assert key1 == key2
+        assert len(key1) == 64  # SHA-256 生成 64 个十六进制字符
+
+    def test_get_cache_key_different_params(self) -> None:
+        """不同参数生成不同 cache key。"""
+        key1 = get_cache_key("expandQuery", {"query": "test"})
+        key2 = get_cache_key("expandQuery", {"query": "test2"})
+        key3 = get_cache_key("rerank", {"query": "test"})
+        assert key1 != key2
+        assert key1 != key3
+        assert key2 != key3
+
+    def test_set_and_get_cached_result(self) -> None:
+        """写入缓存后可以读取。"""
+        conn = open_database(":memory:")
+        init_schema(conn)
+        db = Database(conn)
+
+        cache_key = get_cache_key("test", {"a": 1})
+        db.set_cached_result(cache_key, "result123")
+
+        result = db.get_cached_result(cache_key)
+        assert result == "result123"
+        conn.close()
+
+    def test_get_cached_result_miss(self) -> None:
+        """不存在的 key 返回 None。"""
+        conn = open_database(":memory:")
+        init_schema(conn)
+        db = Database(conn)
+
+        result = db.get_cached_result("nonexistent_key")
+        assert result is None
+        conn.close()
+
+    def test_clear_cache(self) -> None:
+        """清空缓存后所有 key 都 miss。"""
+        conn = open_database(":memory:")
+        init_schema(conn)
+        db = Database(conn)
+
+        # 写入多个缓存
+        key1 = get_cache_key("op1", {"a": 1})
+        key2 = get_cache_key("op2", {"b": 2})
+        db.set_cached_result(key1, "result1")
+        db.set_cached_result(key2, "result2")
+
+        # 清空
+        count = db.clear_cache()
+        assert count == 2
+
+        # 验证都 miss
+        assert db.get_cached_result(key1) is None
+        assert db.get_cached_result(key2) is None
+        conn.close()
