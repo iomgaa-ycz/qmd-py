@@ -8,36 +8,36 @@ QMD-Py 结合 BM25 全文检索、向量语义检索和 LLM 重排序，全部�
 
 ```bash
 # 安装
-pip install -e .
+pip install qmd
 
 # 带 LLM 后端
-pip install -e ".[mvp]"
+pip install "qmd[mvp]"
 
 # 带 MCP 支持
-pip install -e ".[mcp]"
+pip install "qmd[mcp]"
 
 # 创建 collection
-qmd-py add notes ~/notes
-qmd-py add docs ~/Documents/docs --pattern "**/*.md"
+qmd add notes ~/notes
+qmd add docs ~/Documents/docs --pattern "**/*.md"
 
 # 添加上下文（关键特性——帮助 LLM 理解文档归属）
-qmd-py context add notes "" "个人笔记和想法"
-qmd-py context add docs "api" "API 文档"
+qmd context add notes "" "个人笔记和想法"
+qmd context add docs "api" "API 文档"
 
 # 生成 embedding
-qmd-py embed
+qmd embed
 
 # 搜索
-qmd-py search "项目进度"              # BM25 关键词检索
-qmd-py query "如何部署服务"            # 混合检索 + 重排序（最佳质量）
+qmd search "项目进度"              # BM25 关键词检索
+qmd query "如何部署服务"            # 混合检索 + 重排序（最佳质量）
 
 # 获取文档
-qmd-py get qmd://notes/meeting.md
-qmd-py get "#abc123"                  # 用 docid
+qmd get qmd://notes/meeting.md
+qmd get "#abc123"                  # 用 docid
 
 # 列出文件
-qmd-py ls
-qmd-py ls notes
+qmd ls
+qmd ls notes
 ```
 
 ## 架构
@@ -149,20 +149,20 @@ Context 是 QMD 的核心特性——为路径添加描述性元数据，帮助 
 
 ```bash
 # Collection 级别
-qmd-py context add notes "" "个人笔记和想法"
+qmd context add notes "" "个人笔记和想法"
 
 # 子路径级别
-qmd-py context add notes "work" "工作相关笔记"
-qmd-py context add notes "work/meetings" "会议记录"
+qmd context add notes "work" "工作相关笔记"
+qmd context add notes "work/meetings" "会议记录"
 
 # 层级继承：搜索 notes/work/meetings/2024.md 会返回所有匹配的 context 拼接
 # → "个人笔记和想法\n工作相关笔记\n会议记录"
 
 # 列出所有 context
-qmd-py context list
+qmd context list
 
 # 删除
-qmd-py context remove notes "work/meetings"
+qmd context remove notes "work/meetings"
 ```
 
 ## CLI 命令
@@ -170,20 +170,20 @@ qmd-py context remove notes "work/meetings"
 ### Collection 管理
 
 ```bash
-qmd-py add <name> <path> [--pattern "**/*.md"]   # 添加 collection
-qmd-py remove <name>                              # 删除 collection
-qmd-py collection rename <old> <new>              # 重命名
-qmd-py list                                       # 列出所有 collection
-qmd-py ls [collection]                            # 列出文件
-qmd-py update [name]                              # 重新索引
-qmd-py status                                     # 索引状态
+qmd add <name> <path> [--pattern "**/*.md"]   # 添加 collection
+qmd remove <name>                              # 删除 collection
+qmd collection rename <old> <new>              # 重命名
+qmd list                                       # 列出所有 collection
+qmd ls [collection]                            # 列出文件
+qmd update [name]                              # 重新索引
+qmd status                                     # 索引状态
 ```
 
 ### 搜索
 
 ```bash
-qmd-py search <query> [-c collection] [-n 10]     # BM25 检索
-qmd-py query <query> [-c collection] [-n 10]      # 混合检索 + 重排序
+qmd search <query> [-c collection] [-n 10]     # BM25 检索
+qmd query <query> [-c collection] [-n 10]      # 混合检索 + 重排序
 ```
 
 ### 输出格式
@@ -202,12 +202,12 @@ qmd-py query <query> [-c collection] [-n 10]      # 混合检索 + 重排序
 ### 文档操作
 
 ```bash
-qmd-py get <file> [-c collection]                 # 获取文档
-qmd-py get qmd://notes/file.md                    # 虚拟路径
-qmd-py get "#abc123"                              # docid
-qmd-py get file.md:42 --max-lines 20             # 指定行范围
-qmd-py embed [--force]                            # 生成 embedding
-qmd-py cleanup                                    # 清理孤立数据 + VACUUM
+qmd get <file> [-c collection]                 # 获取文档
+qmd get qmd://notes/file.md                    # 虚拟路径
+qmd get "#abc123"                              # docid
+qmd get file.md:42 --max-lines 20             # 指定行范围
+qmd embed [--force]                            # 生成 embedding
+qmd cleanup                                    # 清理孤立数据 + VACUUM
 ```
 
 ## MCP Server
@@ -229,7 +229,7 @@ QMD-Py 提供 MCP (Model Context Protocol) 服务器，通过 stdio transport �
 {
   "mcpServers": {
     "qmd": {
-      "command": "qmd-py",
+      "command": "qmd",
       "args": ["serve"]
     }
   }
@@ -250,7 +250,7 @@ QMD-Py 支持三种后端，按优先级自动选择：
 | `qwen3-reranker-0.6b-q8_0` | 重排序 | ~640MB |
 | `qmd-query-expansion-1.7B-Q4_K_M` | 查询扩展 | ~1.1GB |
 
-模型从 HuggingFace 下载，缓存在 `~/.cache/qmd-py/models/`。
+模型从 HuggingFace 下载，缓存在 `~/.cache/qmd/models/`。
 
 ### sentence-transformers（fallback）
 
@@ -296,13 +296,13 @@ llm_cache       -- LLM 响应缓存（query expansion, rerank）
 
 ```bash
 # 基础安装
-pip install -e .
+pip install qmd
 
 # 完整安装（所有 LLM 后端 + MCP）
-pip install -e ".[mvp,mcp]"
+pip install "qmd[mvp,mcp]"
 
 # 开发环境
-pip install -e ".[mvp,mcp,dev]"
+pip install "qmd[mvp,mcp,dev]"
 pytest tests/ -v
 ```
 
