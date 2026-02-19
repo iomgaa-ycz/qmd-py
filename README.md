@@ -1,46 +1,48 @@
 # QMD-Py — Query Markup Documents
 
-本地运行的混合文档搜索引擎。索引你的 Markdown 笔记、会议记录、文档和知识库，用关键词或自然语言搜索。Python 移植版，忠实复现 [qmd](https://github.com/tobi/qmd) 的核心算法。
+[中文文档](README_CN.md)
 
-QMD-Py 结合 BM25 全文检索、向量语义检索和 LLM 重排序，全部本地运行。支持 llama-cpp-python（GGUF 模型）、sentence-transformers、FlagEmbedding 三种后端。
+An on-device hybrid search engine for Markdown documents. Index your notes, docs, and knowledge bases — search with keywords or natural language. Python port faithfully replicating the core algorithms of [qmd](https://github.com/tobi/qmd).
 
-## 快速开始
+QMD-Py combines BM25 full-text search, vector semantic search, and LLM re-ranking — all running locally. Supports llama-cpp-python (GGUF models), sentence-transformers, and FlagEmbedding backends.
+
+## Install
 
 ```bash
-# 安装
-pip install qmd
+pip install qmd                # core
+pip install "qmd[mvp]"         # + LLM backends (sentence-transformers, llama-cpp, etc.)
+pip install "qmd[mcp]"         # + MCP server for Claude Desktop
+pip install "qmd[mvp,mcp]"     # everything
+```
 
-# 带 LLM 后端
-pip install "qmd[mvp]"
+## Quick Start
 
-# 带 MCP 支持
-pip install "qmd[mcp]"
-
-# 创建 collection
+```bash
+# Add a collection
 qmd add notes ~/notes
 qmd add docs ~/Documents/docs --pattern "**/*.md"
 
-# 添加上下文（关键特性——帮助 LLM 理解文档归属）
-qmd context add notes "" "个人笔记和想法"
-qmd context add docs "api" "API 文档"
+# Add context (helps LLM understand what docs are about)
+qmd context add notes "" "Personal notes and ideas"
+qmd context add docs "api" "API documentation"
 
-# 生成 embedding
+# Generate embeddings
 qmd embed
 
-# 搜索
-qmd search "项目进度"              # BM25 关键词检索
-qmd query "如何部署服务"            # 混合检索 + 重排序（最佳质量）
+# Search
+qmd search "project progress"          # BM25 keyword search
+qmd query "how to deploy the service"  # Hybrid search + reranking (best quality)
 
-# 获取文档
+# Get a document
 qmd get qmd://notes/meeting.md
-qmd get "#abc123"                  # 用 docid
+qmd get "#abc123"                      # by docid
 
-# 列出文件
+# List files
 qmd ls
 qmd ls notes
 ```
 
-## 架构
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -52,29 +54,29 @@ qmd ls notes
                            └──────┬───────┘
                                   │
                    ┌──────────────┴──────────────┐
-                   ▼                             ▼
-          ┌────────────────┐            ┌────────────────┐
-          │ Query Expansion│            │  Original Query│
-          │  (fine-tuned)  │            │   (×2 weight)  │
-          └───────┬────────┘            └───────┬────────┘
-                  │                             │
-                  │  lex / vec / hyde 变体       │
-                  └──────────────┬──────────────┘
+                   ▼                              ▼
+          ┌────────────────┐            ┌─────────────────┐
+          │ Query Expansion│            │  Original Query  │
+          │  (fine-tuned)  │            │   (×2 weight)    │
+          └───────┬────────┘            └────────┬────────┘
+                  │                              │
+                  │  lex / vec / hyde variants    │
+                  └──────────────┬───────────────┘
                                  │
            ┌─────────────────────┼─────────────────────┐
            ▼                     ▼                     ▼
      ┌───────────┐         ┌───────────┐         ┌───────────┐
      │ BM25+Vec  │         │ BM25+Vec  │         │ BM25+Vec  │
-     │(原始 query)│         │(扩展 query1)│        │(扩展 query2)│
+     │ (original)│         │(expanded 1)│        │(expanded 2)│
      └─────┬─────┘         └─────┬─────┘         └─────┬─────┘
            │                     │                     │
            └─────────────────────┼─────────────────────┘
                                  ▼
                     ┌─────────────────────────┐
                     │   RRF Fusion (k=60)     │
-                    │   原始 query ×2 权重      │
+                    │   Original ×2 weight     │
                     │   Top-rank bonus: +0.05  │
-                    │   取 Top 40 候选          │
+                    │   Top 40 candidates      │
                     └────────────┬────────────┘
                                  ▼
                     ┌─────────────────────────┐
@@ -90,140 +92,141 @@ qmd ls notes
                     └─────────────────────────┘
 ```
 
-## 检索算法
+## Retrieval Algorithm
 
-### 分数归一化
+### Score Normalization
 
-| 后端 | 原始分数 | 转换 | 范围 |
-|------|---------|------|------|
+| Backend | Raw Score | Transform | Range |
+|---------|-----------|-----------|-------|
 | **BM25 (FTS5)** | SQLite FTS5 BM25 | `abs(score)` | 0 ~ 25+ |
-| **Vector** | 余弦距离 | `1 / (1 + distance)` | 0.0 ~ 1.0 |
-| **Reranker** | LLM 0-10 评分 | `score / 10` | 0.0 ~ 1.0 |
+| **Vector** | Cosine distance | `1 / (1 + distance)` | 0.0 ~ 1.0 |
+| **Reranker** | LLM 0-10 rating | `score / 10` | 0.0 ~ 1.0 |
 
-### 融合策略
+### Fusion Strategy
 
-`query` 命令使用 **Reciprocal Rank Fusion (RRF)** + 位置感知混合：
+The `query` command uses **Reciprocal Rank Fusion (RRF)** with position-aware blending:
 
-1. **Query Expansion**: 原始查询 (×2 权重) + LLM 生成的变体查询
-2. **并行检索**: 每个查询同时搜索 FTS 和向量索引
-3. **RRF 融合**: `score = Σ(1/(k+rank+1))`，k=60
-4. **Top-Rank Bonus**: 任意列表中排名 #1 的文档 +0.05，#2-3 +0.02
-5. **强信号检测**: BM25 top-1 分数 ≥0.85 且与 top-2 差距 ≥0.15 时跳过 expansion
-6. **Top-K 筛选**: 取 top 40 候选进入重排序
-7. **LLM 重排序**: 对每个 chunk（非全文）打分
+1. **Query Expansion**: Original query (×2 weight) + LLM-generated variant queries
+2. **Parallel Retrieval**: Each query searches both FTS and vector indexes
+3. **RRF Fusion**: `score = Σ(1/(k+rank+1))`, k=60
+4. **Top-Rank Bonus**: +0.05 for #1 in any list, +0.02 for #2-3
+5. **Strong Signal Detection**: Skip expansion when BM25 top-1 ≥ 0.85 and gap to top-2 ≥ 0.15
+6. **Top-K Selection**: Top 40 candidates enter re-ranking
+7. **LLM Re-ranking**: Score each chunk (not full document)
 8. **Position-Aware Blending**:
-   - RRF rank 1-3: 75% 检索 / 25% 重排序（保护精确匹配）
-   - RRF rank 4-10: 60% 检索 / 40% 重排序
-   - RRF rank 11+: 40% 检索 / 60% 重排序（信赖重排序）
+   - RRF rank 1-3: 75% retrieval / 25% reranker (protect exact matches)
+   - RRF rank 4-10: 60% retrieval / 40% reranker
+   - RRF rank 11+: 40% retrieval / 60% reranker (trust reranker)
 
-### 分数解读
+### Score Interpretation
 
-| 分数 | 含义 |
-|------|------|
-| 0.8 - 1.0 | 高度相关 |
-| 0.5 - 0.8 | 中等相关 |
-| 0.2 - 0.5 | 有一定相关 |
-| 0.0 - 0.2 | 低相关 |
+| Score | Meaning |
+|-------|---------|
+| 0.8 – 1.0 | Highly relevant |
+| 0.5 – 0.8 | Moderately relevant |
+| 0.2 – 0.5 | Somewhat relevant |
+| 0.0 – 0.2 | Low relevance |
 
-## 智能分块
+## Smart Chunking
 
-文档按 ~900 token 分块，15% 重叠，使用断点检测算法寻找自然切割点：
+Documents are split into ~900-token chunks with 15% overlap, using a breakpoint detection algorithm to find natural split points:
 
-| 模式 | 分数 | 说明 |
-|------|------|------|
-| `# Heading` | 100 | H1 标题 |
-| `## Heading` | 90 | H2 标题 |
-| `### Heading` | 80 | H3 标题 |
-| `#### ~ ######` | 70~50 | H4-H6 |
-| `` ``` `` | 80 | 代码块边界 |
-| `---` / `***` | 60 | 分隔线 |
-| 空行 | 20 | 段落边界 |
-| `- item` / `1. item` | 5 | 列表项 |
-| 换行 | 1 | 最小断点 |
+| Pattern | Score | Description |
+|---------|-------|-------------|
+| `# Heading` | 100 | H1 heading |
+| `## Heading` | 90 | H2 heading |
+| `### Heading` | 80 | H3 heading |
+| `#### ~ ######` | 70–50 | H4–H6 |
+| `` ``` `` | 80 | Code fence boundary |
+| `---` / `***` | 60 | Horizontal rule |
+| Blank line | 20 | Paragraph boundary |
+| `- item` / `1. item` | 5 | List item |
+| Newline | 1 | Minimum breakpoint |
 
-**算法**: 接近 900 token 目标时，在前 200 token 窗口内搜索最佳断点。分数衰减公式：`finalScore = baseScore × (1 - (distance/window)² × 0.7)`。代码块内的断点被忽略——代码保持完整。
+**Algorithm**: When approaching the 900-token target, search the preceding 200-token window for the best breakpoint. Score decay: `finalScore = baseScore × (1 - (distance/window)² × 0.7)`. Breakpoints inside code fences are ignored — code stays intact.
 
-## Context 系统
+## Context System
 
-Context 是 QMD 的核心特性——为路径添加描述性元数据，帮助 LLM 理解文档归属。
+Context is a core QMD feature — attach descriptive metadata to paths so LLMs understand what documents are about.
 
 ```bash
-# Collection 级别
-qmd context add notes "" "个人笔记和想法"
+# Collection level
+qmd context add notes "" "Personal notes and ideas"
 
-# 子路径级别
-qmd context add notes "work" "工作相关笔记"
-qmd context add notes "work/meetings" "会议记录"
+# Sub-path level
+qmd context add notes "work" "Work-related notes"
+qmd context add notes "work/meetings" "Meeting notes"
 
-# 层级继承：搜索 notes/work/meetings/2024.md 会返回所有匹配的 context 拼接
-# → "个人笔记和想法\n工作相关笔记\n会议记录"
+# Hierarchical inheritance: searching notes/work/meetings/2024.md
+# returns all matching contexts concatenated:
+# → "Personal notes and ideas\nWork-related notes\nMeeting notes"
 
-# 列出所有 context
+# List all contexts
 qmd context list
 
-# 删除
+# Remove
 qmd context remove notes "work/meetings"
 ```
 
-## CLI 命令
+## CLI Commands
 
-### Collection 管理
+### Collection Management
 
 ```bash
-qmd add <name> <path> [--pattern "**/*.md"]   # 添加 collection
-qmd remove <name>                              # 删除 collection
-qmd collection rename <old> <new>              # 重命名
-qmd list                                       # 列出所有 collection
-qmd ls [collection]                            # 列出文件
-qmd update [name]                              # 重新索引
-qmd status                                     # 索引状态
+qmd add <name> <path> [--pattern "**/*.md"]   # Add collection
+qmd remove <name>                              # Remove collection
+qmd collection rename <old> <new>              # Rename
+qmd list                                       # List all collections
+qmd ls [collection]                            # List files
+qmd update [name]                              # Re-index
+qmd status                                     # Index status
 ```
 
-### 搜索
+### Search
 
 ```bash
-qmd search <query> [-c collection] [-n 10]     # BM25 检索
-qmd query <query> [-c collection] [-n 10]      # 混合检索 + 重排序
+qmd search <query> [-c collection] [-n 10]     # BM25 search
+qmd query <query> [-c collection] [-n 10]      # Hybrid search + reranking
 ```
 
-### 输出格式
+### Output Formats
 
 ```bash
---format cli     # 默认终端格式
---format json    # JSON（适合 agent 消费）
+--format cli     # Default terminal format
+--format json    # JSON (for agent consumption)
 --format csv     # CSV
 --format xml     # XML
 --format md      # Markdown
---format files   # 简单文件列表：docid,score,filepath,context
---full           # 显示完整内容
---line-numbers   # 显示行号
+--format files   # Simple file list: docid,score,filepath,context
+--full           # Show full content
+--line-numbers   # Show line numbers
 ```
 
-### 文档操作
+### Document Operations
 
 ```bash
-qmd get <file> [-c collection]                 # 获取文档
-qmd get qmd://notes/file.md                    # 虚拟路径
-qmd get "#abc123"                              # docid
-qmd get file.md:42 --max-lines 20             # 指定行范围
-qmd embed [--force]                            # 生成 embedding
-qmd cleanup                                    # 清理孤立数据 + VACUUM
+qmd get <file> [-c collection]                 # Get document
+qmd get qmd://notes/file.md                    # Virtual path
+qmd get "#abc123"                              # By docid
+qmd get file.md:42 --max-lines 20             # Line range
+qmd embed [--force]                            # Generate embeddings
+qmd cleanup                                    # Clean orphaned data + VACUUM
 ```
 
 ## MCP Server
 
-QMD-Py 提供 MCP (Model Context Protocol) 服务器，通过 stdio transport 与 Claude Desktop 等客户端通信。
+QMD-Py provides an MCP (Model Context Protocol) server via stdio transport for use with Claude Desktop and other MCP clients.
 
-**工具列表:**
-- `qmd_search` — BM25 关键词检索
-- `qmd_deep_search` — 混合检索 + query expansion + 重排序
-- `qmd_vector_search` — 向量语义检索
-- `qmd_get` — 获取文档（路径或 docid，支持模糊匹配建议）
-- `qmd_index` — 索引/更新 collection
-- `qmd_status` — 索引健康状态
-- `qmd_collections` — 列出 collection
+**Tools:**
+- `qmd_search` — BM25 keyword search
+- `qmd_deep_search` — Hybrid search + query expansion + reranking
+- `qmd_vector_search` — Vector semantic search
+- `qmd_get` — Get document (path or docid, with fuzzy match suggestions)
+- `qmd_index` — Index/update collection
+- `qmd_status` — Index health status
+- `qmd_collections` — List collections
 
-**Claude Desktop 配置** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+**Claude Desktop config** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
 ```json
 {
@@ -236,109 +239,104 @@ QMD-Py 提供 MCP (Model Context Protocol) 服务器，通过 stdio transport �
 }
 ```
 
-## LLM 后端
+## LLM Backends
 
-QMD-Py 支持三种后端，按优先级自动选择：
+QMD-Py supports three backends, auto-selected by priority:
 
-### llama-cpp-python（推荐）
+### llama-cpp-python (recommended)
 
-使用 GGUF 模型，与原版 qmd 相同的模型：
+Uses GGUF models, same as the original qmd:
 
-| 模型 | 用途 | 大小 |
-|------|------|------|
-| `embeddinggemma-300M-Q8_0` | 向量 embedding | ~300MB |
-| `qwen3-reranker-0.6b-q8_0` | 重排序 | ~640MB |
-| `qmd-query-expansion-1.7B-Q4_K_M` | 查询扩展 | ~1.1GB |
+| Model | Purpose | Size |
+|-------|---------|------|
+| `embeddinggemma-300M-Q8_0` | Vector embedding | ~300MB |
+| `qwen3-reranker-0.6b-q8_0` | Re-ranking | ~640MB |
+| `qmd-query-expansion-1.7B-Q4_K_M` | Query expansion | ~1.1GB |
 
-模型从 HuggingFace 下载，缓存在 `~/.cache/qmd/models/`。
+Models are downloaded from HuggingFace and cached in `~/.cache/qmd/models/`.
 
-### sentence-transformers（fallback）
+### sentence-transformers (fallback)
 
-纯 Python embedding，不需要编译 llama-cpp。适合快速测试。
+Pure Python embedding — no llama-cpp compilation needed. Good for quick testing.
 
 ### FlagEmbedding
 
-专用 reranker 后端（FlagReranker），可与其他后端组合使用。
+Dedicated reranker backend (FlagReranker), can be combined with other backends.
 
-## 数据存储
+## Data Storage
 
-数据库: `~/.config/qmd/qmd.db` (SQLite)
+Database: `~/.config/qmd/qmd.db` (SQLite)
 
 ```sql
-collections     -- 集合目录配置
-path_contexts   -- 路径 context 描述
-documents       -- 文档元数据（path, title, hash, active）
-documents_fts   -- FTS5 全文索引
-content         -- 文档内容（content-addressable，按 SHA256 去重）
-content_vectors -- embedding 分块（hash, seq, pos）
-vectors_vec     -- sqlite-vec 向量索引
-llm_cache       -- LLM 响应缓存（query expansion, rerank）
+collections     -- Collection directory config
+path_contexts   -- Path context descriptions
+documents       -- Document metadata (path, title, hash, active)
+documents_fts   -- FTS5 full-text index
+content         -- Document content (content-addressable, SHA256 dedup)
+content_vectors -- Embedding chunks (hash, seq, pos)
+vectors_vec     -- sqlite-vec vector index
+llm_cache       -- LLM response cache (query expansion, rerank)
 ```
 
-配置文件: `~/.config/qmd/qmd.yaml`
+Config file: `~/.config/qmd/qmd.yaml`
 
-## 环境变量
+## Environment Variables
 
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `QMD_CONFIG_DIR` | `~/.config/qmd` | 配置目录 |
-| `QMD_DATA_DIR` | `~/.cache/qmd` | 数据/缓存目录 |
-| `XDG_CONFIG_HOME` | `~/.config` | XDG 配置根目录 |
-| `XDG_CACHE_HOME` | `~/.cache` | XDG 缓存根目录 |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `QMD_CONFIG_DIR` | `~/.config/qmd` | Config directory |
+| `QMD_DATA_DIR` | `~/.cache/qmd` | Data/cache directory |
+| `XDG_CONFIG_HOME` | `~/.config` | XDG config root |
+| `XDG_CACHE_HOME` | `~/.cache` | XDG cache root |
 
-## 系统要求
+## Requirements
 
 - **Python** >= 3.11
-- **SQLite** >= 3.35（FTS5 支持）
-- **GPU**（可选）: CUDA 或 Apple MPS 加速 embedding/reranking
+- **SQLite** >= 3.35 (FTS5 support)
+- **GPU** (optional): CUDA or Apple MPS for accelerated embedding/reranking
 
-## 安装
+## Development
 
 ```bash
-# 基础安装
-pip install qmd
-
-# 完整安装（所有 LLM 后端 + MCP）
-pip install "qmd[mvp,mcp]"
-
-# 开发环境
+git clone https://github.com/iomgaa-ycz/qmd-py.git
+cd qmd-py
 pip install "qmd[mvp,mcp,dev]"
 pytest tests/ -v
 ```
 
-## 项目结构
+## Project Structure
 
 ```
 qmd/
 ├── core/
-│   ├── db.py           # SQLite 数据库层（schema、CRUD、FTS5、sqlite-vec）
-│   ├── config.py       # YAML 配置管理、collection/context 操作
-│   ├── store.py        # 文档索引层（content-addressable 存储、增量更新）
-│   ├── retrieval.py    # 混合检索引擎（BM25 + Vector + RRF + Rerank）
-│   ├── chunking.py     # 智能分块（断点检测、代码围栏保护）
-│   ├── document.py     # 文档查找辅助（docid、模糊匹配、glob、cleanup）
-│   └── watcher.py      # 文件监听（watchdog，自动索引）
+│   ├── db.py           # SQLite database layer (schema, CRUD, FTS5, sqlite-vec)
+│   ├── config.py       # YAML config management, collection/context operations
+│   ├── store.py        # Document indexing (content-addressable storage, incremental updates)
+│   ├── retrieval.py    # Hybrid retrieval engine (BM25 + Vector + RRF + Rerank)
+│   ├── chunking.py     # Smart chunking (breakpoint detection, code fence protection)
+│   ├── document.py     # Document lookup helpers (docid, fuzzy match, glob, cleanup)
+│   └── watcher.py      # File watcher (watchdog, auto-index on change)
 ├── cli/
-│   ├── main.py         # CLI 入口（argparse，所有命令）
-│   └── formatter.py    # 输出格式化（JSON/CSV/XML/MD/Files）
+│   ├── main.py         # CLI entry point (argparse, all commands)
+│   └── formatter.py    # Output formatting (JSON/CSV/XML/MD/Files)
 ├── llm/
-│   ├── base.py         # LLM 抽象接口
-│   ├── llama_cpp.py    # llama-cpp-python 后端
-│   ├── sentence_tf.py  # sentence-transformers 后端
-│   ├── flagembed.py    # FlagEmbedding reranker 后端
-│   └── models.py       # 模型配置、GPU 检测
+│   ├── base.py         # LLM abstract interface
+│   ├── llama_cpp.py    # llama-cpp-python backend
+│   ├── sentence_tf.py  # sentence-transformers backend
+│   ├── flagembed.py    # FlagEmbedding reranker backend
+│   └── models.py       # Model config, GPU detection
 ├── mcp/
-│   └── server.py       # MCP Server（stdio transport）
+│   └── server.py       # MCP Server (stdio transport)
 ├── utils/
-│   ├── paths.py        # 路径工具、VirtualPath (qmd://)
-│   ├── snippet.py      # 摘要提取、标题提取
+│   ├── paths.py        # Path utilities, VirtualPath (qmd://)
+│   ├── snippet.py      # Snippet extraction, title extraction
 │   └── hashing.py      # SHA256 content hash
-└── __init__.py         # create_store() / create_llm_backend() 入口
+└── __init__.py         # create_store() / create_llm_backend() entry points
 ```
 
-## 致谢
+## Acknowledgements
 
-Python 移植自 [qmd](https://github.com/tobi/qmd)（Tobias Lütke），核心检索算法、分块策略和融合逻辑忠实复现原版设计。
+Python port of [qmd](https://github.com/tobi/qmd) by Tobias Lütke. Core retrieval algorithms, chunking strategy, and fusion logic faithfully replicate the original design.
 
 ## License
 
