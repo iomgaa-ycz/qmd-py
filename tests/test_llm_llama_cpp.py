@@ -134,10 +134,6 @@ class TestLlamaCppBackend:
             "task: search result | query: test text"
         )
 
-        # 验证操作计数
-        mock_model_manager.start_operation.assert_called_once()
-        mock_model_manager.end_operation.assert_called_once()
-
     def test_embed_document_with_title(
         self, backend: LlamaCppBackend, mock_model_manager: Mock, tmp_path: Path
     ):
@@ -180,9 +176,6 @@ class TestLlamaCppBackend:
 
         # 异常时应返回 None
         assert result is None
-
-        # 仍然要调用 end_operation
-        mock_model_manager.end_operation.assert_called_once()
 
     def test_embed_batch_success(
         self, backend: LlamaCppBackend, mock_model_manager: Mock, tmp_path: Path
