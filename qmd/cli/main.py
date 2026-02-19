@@ -11,6 +11,8 @@ from pathlib import Path
 from loguru import logger
 
 from qmd import QMD
+from qmd.core.config import add_context, list_all_contexts, remove_context
+from qmd.utils.paths import is_virtual_path, parse_virtual_path
 
 
 def setup_logging(verbose: bool) -> None:
@@ -212,6 +214,208 @@ def cmd_status(args: argparse.Namespace) -> int:
         qmd.stop()
 
 
+def cmd_query(args: argparse.Namespace) -> int:
+    """深度搜索（hybrid + rerank）"""
+    qmd = QMD(backend=args.backend, db_path=args.db)
+    try:
+        collections = [args.collection] if args.collection else None
+
+        # query 命令强制使用完整的混合检索（如果后端支持）
+        logger.info("执行深度搜索（hybrid + rerank）")
+        results = qmd.search(args.query, collections=collections, limit=args.limit)
+
+        if not results:
+            print("未找到匹配的文档")
+            return 0
+
+        print(f"找到 {len(results)} 个结果:\n")
+        for i, result in enumerate(results, 1):
+            print(f"{i}. {result.collection}/{result.file}")
+            print(f"   分数: {result.score:.3f}")
+            print(f"   标题: {result.title}")
+
+            # 显示摘要（前 200 个字符）
+            snippet = result.body[:200].replace("\n", " ")
+            if len(result.body) > 200:
+                snippet += "..."
+            print(f"   摘要: {snippet}")
+            print()
+
+        return 0
+    finally:
+        qmd.stop()
+
+
+def cmd_get(args: argparse.Namespace) -> int:
+    """获取单个文档内容"""
+    qmd = QMD(backend=args.backend, db_path=args.db)
+    try:
+        file_path = args.file
+        line_num = None
+
+        # 检查是否有 :linenum 后缀
+        if ":" in file_path:
+            parts = file_path.rsplit(":", 1)
+            if parts[1].isdigit():
+                file_path = parts[0]
+                line_num = int(parts[1])
+
+        # 解析路径（支持虚拟路径和普通路径）
+        collection_name = None
+        doc_path = None
+
+        if is_virtual_path(file_path):
+            # 虚拟路径：qmd://collection/path
+            vpath = parse_virtual_path(file_path)
+            if vpath is None:
+                print(f"✗ 无效的虚拟路径: {file_path}", file=sys.stderr)
+                return 1
+            collection_name = vpath.collection_name
+            doc_path = vpath.path
+        else:
+            # 普通路径：需要从所有 collections 中查找
+            # 简化实现：假设用户提供的是相对路径，需要指定 collection
+            if not args.collection:
+                print("✗ 普通路径需要指定 --collection", file=sys.stderr)
+                return 1
+            collection_name = args.collection
+            doc_path = file_path
+
+        # 查找文档
+        doc = qmd.db.find_active_document(collection_name, doc_path)
+        if doc is None:
+            print(f"✗ 文档不存在: {collection_name}/{doc_path}", file=sys.stderr)
+            return 1
+
+        # 获取内容
+        content = qmd.db.get_content_by_hash(doc["hash"])
+        if content is None:
+            print(f"✗ 无法读取文档内容", file=sys.stderr)
+            return 1
+
+        lines = content.splitlines()
+
+        # 处理行号过滤
+        from_line = args.from_line or 1
+        max_lines = args.max_lines
+
+        if line_num:
+            # 如果有 :linenum 后缀，显示该行附近的内容
+            from_line = max(1, line_num - 5)
+            max_lines = max_lines or 11
+
+        # 裁剪内容
+        start_idx = from_line - 1
+        end_idx = start_idx + max_lines if max_lines else len(lines)
+        display_lines = lines[start_idx:end_idx]
+
+        # 输出
+        print(f"文档: {collection_name}/{doc_path}")
+        print(f"标题: {doc['title']}")
+        print(f"哈希: {doc['hash'][:8]}...")
+        print()
+
+        if args.line_numbers:
+            for i, line in enumerate(display_lines, start=from_line):
+                print(f"{i:5d} | {line}")
+        else:
+            for line in display_lines:
+                print(line)
+
+        return 0
+    finally:
+        qmd.stop()
+
+
+def cmd_embed(args: argparse.Namespace) -> int:
+    """手动生成 embedding"""
+    qmd = QMD(backend=args.backend, db_path=args.db)
+    try:
+        if qmd.llm_backend is None:
+            print("✗ 无可用的 LLM 后端，无法生成 embedding", file=sys.stderr)
+            return 1
+
+        # 如果 --force，清空所有 embedding
+        if args.force:
+            logger.info("清空所有 embedding...")
+            qmd.db.clear_all_embeddings()
+            print("✓ 已清空所有 embedding")
+
+        # 生成 embedding
+        logger.info("开始生成 embedding...")
+        stats = qmd.store.embed_documents(qmd.llm_backend, force=args.force)
+
+        print(f"✓ Embedding 生成完成:")
+        print(f"  已生成: {stats['embedded']}")
+        print(f"  跳过: {stats['skipped']}")
+
+        if stats["errors"] > 0:
+            print(f"  错误: {stats['errors']}")
+
+        return 0
+    finally:
+        qmd.stop()
+
+
+def cmd_context_add(args: argparse.Namespace) -> int:
+    """添加上下文"""
+    success = add_context(args.collection, args.path_prefix, args.context)
+    if success:
+        print(f"✓ 已添加上下文: {args.collection}/{args.path_prefix}")
+        return 0
+    else:
+        print(f"✗ Collection 不存在: {args.collection}", file=sys.stderr)
+        return 1
+
+
+def cmd_context_list(args: argparse.Namespace) -> int:
+    """列出所有上下文"""
+    contexts = list_all_contexts()
+
+    if not contexts:
+        print("没有配置上下文")
+        return 0
+
+    print(f"共 {len(contexts)} 个上下文:\n")
+    for ctx in contexts:
+        print(f"• {ctx['collection']}/{ctx['path']}")
+        print(f"  {ctx['context'][:100]}...")
+        print()
+
+    return 0
+
+
+def cmd_context_remove(args: argparse.Namespace) -> int:
+    """删除上下文"""
+    success = remove_context(args.collection, args.path_prefix)
+    if success:
+        print(f"✓ 已删除上下文: {args.collection}/{args.path_prefix}")
+        return 0
+    else:
+        print(f"✗ 上下文不存在: {args.collection}/{args.path_prefix}", file=sys.stderr)
+        return 1
+
+
+def cmd_version(args: argparse.Namespace) -> int:
+    """显示版本号"""
+    import tomllib
+    from pathlib import Path
+
+    # 读取 pyproject.toml
+    project_root = Path(__file__).parent.parent.parent
+    pyproject_path = project_root / "pyproject.toml"
+
+    if pyproject_path.exists():
+        with open(pyproject_path, "rb") as f:
+            data = tomllib.load(f)
+            version = data.get("project", {}).get("version", "unknown")
+    else:
+        version = "unknown"
+
+    print(f"qmd-py version {version}")
+    return 0
+
+
 def create_parser() -> argparse.ArgumentParser:
     """创建命令行参数解析器"""
     parser = argparse.ArgumentParser(
@@ -296,6 +500,77 @@ def create_parser() -> argparse.ArgumentParser:
     # status
     subparsers.add_parser("status", help="显示索引状态")
 
+    # query
+    parser_query = subparsers.add_parser("query", help="深度搜索（hybrid + rerank）")
+    parser_query.add_argument("query", help="查询文本")
+    parser_query.add_argument(
+        "--collection",
+        "-c",
+        help="限定 collection",
+    )
+    parser_query.add_argument(
+        "--limit",
+        "-n",
+        type=int,
+        default=10,
+        help="返回结果数量 (默认: 10)",
+    )
+
+    # get
+    parser_get = subparsers.add_parser("get", help="获取文档内容")
+    parser_get.add_argument("file", help="文档路径或虚拟路径 (支持 :linenum 后缀)")
+    parser_get.add_argument(
+        "--collection",
+        "-c",
+        help="Collection 名称（普通路径需要）",
+    )
+    parser_get.add_argument(
+        "--from-line",
+        type=int,
+        help="起始行号",
+    )
+    parser_get.add_argument(
+        "--max-lines",
+        type=int,
+        help="最大行数",
+    )
+    parser_get.add_argument(
+        "--line-numbers",
+        "-n",
+        action="store_true",
+        help="显示行号",
+    )
+
+    # embed
+    parser_embed = subparsers.add_parser("embed", help="生成 embedding 向量")
+    parser_embed.add_argument(
+        "--force",
+        "-f",
+        action="store_true",
+        help="强制重新生成所有 embedding",
+    )
+
+    # context 子命令组
+    parser_context = subparsers.add_parser("context", help="管理上下文")
+    context_subparsers = parser_context.add_subparsers(dest="context_command", help="context 子命令")
+
+    # context add
+    parser_context_add = context_subparsers.add_parser("add", help="添加上下文")
+    parser_context_add.add_argument("collection", help="Collection 名称")
+    parser_context_add.add_argument("path_prefix", help="路径前缀")
+    parser_context_add.add_argument("context", help="上下文文本")
+
+    # context list
+    context_subparsers.add_parser("list", help="列出所有上下文")
+
+    # context remove
+    parser_context_remove = context_subparsers.add_parser("remove", help="删除上下文")
+    parser_context_remove.add_argument("collection", help="Collection 名称")
+    parser_context_remove.add_argument("path_prefix", help="路径前缀")
+
+    # version
+    subparsers.add_parser("version", help="显示版本号")
+
     return parser
 
 
@@ -312,6 +587,26 @@ def main() -> int:
         parser.print_help()
         return 1
 
+    # 特殊处理 context 子命令
+    if args.command == "context":
+        if not hasattr(args, "context_command") or not args.context_command:
+            print("✗ 请指定 context 子命令: add, list, remove", file=sys.stderr)
+            return 1
+
+        context_commands = {
+            "add": cmd_context_add,
+            "list": cmd_context_list,
+            "remove": cmd_context_remove,
+        }
+        handler = context_commands.get(args.context_command)
+        if handler:
+            try:
+                return handler(args)
+            except Exception as e:
+                logger.exception(f"命令执行失败: {e}")
+                print(f"✗ 错误: {e}", file=sys.stderr)
+                return 1
+
     # 路由到对应的命令处理函数
     commands = {
         "add": cmd_add,
@@ -322,6 +617,10 @@ def main() -> int:
         "watch": cmd_watch,
         "serve": cmd_serve,
         "status": cmd_status,
+        "query": cmd_query,
+        "get": cmd_get,
+        "embed": cmd_embed,
+        "version": cmd_version,
     }
 
     handler = commands.get(args.command)

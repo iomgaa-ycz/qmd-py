@@ -221,6 +221,20 @@ class Database:
 
     # === Content 操作 ===
 
+    def get_content_by_hash(self, content_hash: str) -> str | None:
+        """根据哈希获取文档内容
+
+        Args:
+            content_hash: 内容 SHA256 哈希
+
+        Returns:
+            文档内容，如果不存在返回 None
+        """
+        row = self.conn.execute(
+            "SELECT doc FROM content WHERE hash = ?", (content_hash,)
+        ).fetchone()
+        return row["doc"] if row else None
+
     def insert_content(self, content_hash: str, content: str, created_at: str) -> None:
         """插入内容（content-addressable 存储）
 
