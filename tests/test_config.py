@@ -424,21 +424,25 @@ class TestCollectionContext:
         assert {"collection": "docs", "path": "/2024", "context": "Docs 2024"} in all_contexts
         assert {"collection": "notes", "path": "/personal", "context": "Personal notes"} in all_contexts
 
-    def test_find_context_for_path(self, temp_config_dir):
-        """测试根据路径查找上下文（最长前缀匹配）"""
+    def test_context_hierarchy_inheritance(self, temp_config_dir):
+        """测试层级继承（所有匹配的 contexts 从通用到具体拼接）"""
+        set_global_context("Global context")
         add_collection("docs", "/home/user/docs")
         add_context("docs", "/", "Root context")
         add_context("docs", "/2024", "2024 context")
         add_context("docs", "/2024/Q1", "Q1 context")
 
-        # 最具体匹配
-        assert find_context_for_path("docs", "/2024/Q1/report.md") == "Q1 context"
+        # 路径 /2024/Q1/report.md 匹配 global + / + /2024 + /2024/Q1
+        result = find_context_for_path("docs", "/2024/Q1/report.md")
+        assert result == "Global context\n\nRoot context\n\n2024 context\n\nQ1 context"
 
-        # 次具体匹配
-        assert find_context_for_path("docs", "/2024/Q2/report.md") == "2024 context"
+        # 路径 /2024/Q2/report.md 匹配 global + / + /2024
+        result = find_context_for_path("docs", "/2024/Q2/report.md")
+        assert result == "Global context\n\nRoot context\n\n2024 context"
 
-        # 根匹配
-        assert find_context_for_path("docs", "/2025/report.md") == "Root context"
+        # 路径 /2025/report.md 只匹配 global + /
+        result = find_context_for_path("docs", "/2025/report.md")
+        assert result == "Global context\n\nRoot context"
 
     def test_find_context_normalizes_paths(self, temp_config_dir):
         """测试路径规范化（处理前导斜杠）"""
