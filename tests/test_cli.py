@@ -495,3 +495,187 @@ class TestCLI:
         assert exit_code == 1
         captured = capsys.readouterr()
         assert "未知命令" in captured.err or "unknown" in captured.err.lower()
+
+    def test_cmd_query_basic(self, tmp_docs: Path, tmp_path: Path, monkeypatch, capsys):
+        """测试 query 命令基本执行"""
+        db_path = tmp_path / "test.db"
+
+        # 添加 collection
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["qmd-py", "--db", str(db_path), "add", "notes", str(tmp_docs)],
+        )
+        assert main() == 0
+
+        # 更新索引
+        monkeypatch.setattr(
+            sys, "argv", ["qmd-py", "--db", str(db_path), "update"]
+        )
+        assert main() == 0
+
+        # 执行 query 搜索
+        monkeypatch.setattr(
+            sys, "argv", ["qmd-py", "--db", str(db_path), "query", "python"]
+        )
+        exit_code = main()
+
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        # 应该找到包含 "python" 的文档
+        assert "doc1.md" in captured.out.lower() or "未找到" in captured.out
+
+    def test_cmd_get_by_path(self, tmp_docs: Path, tmp_path: Path, monkeypatch, capsys):
+        """测试通过路径获取文档"""
+        db_path = tmp_path / "test.db"
+
+        # 添加 collection
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["qmd-py", "--db", str(db_path), "add", "notes", str(tmp_docs)],
+        )
+        assert main() == 0
+
+        # 更新索引
+        monkeypatch.setattr(
+            sys, "argv", ["qmd-py", "--db", str(db_path), "update"]
+        )
+        assert main() == 0
+
+        # 获取文档
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["qmd-py", "--db", str(db_path), "get", "-c", "notes", "doc1.md"],
+        )
+        exit_code = main()
+
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        assert "Document 1" in captured.out or "Python" in captured.out
+
+    def test_cmd_get_by_virtual_path(self, tmp_docs: Path, tmp_path: Path, monkeypatch, capsys):
+        """测试通过虚拟路径获取文档"""
+        db_path = tmp_path / "test.db"
+
+        # 添加 collection
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["qmd-py", "--db", str(db_path), "add", "notes", str(tmp_docs)],
+        )
+        assert main() == 0
+
+        # 更新索引
+        monkeypatch.setattr(
+            sys, "argv", ["qmd-py", "--db", str(db_path), "update"]
+        )
+        assert main() == 0
+
+        # 通过虚拟路径获取文档
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["qmd-py", "--db", str(db_path), "get", "qmd://notes/doc1.md"],
+        )
+        exit_code = main()
+
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        assert "Document 1" in captured.out or "Python" in captured.out
+
+    def test_cmd_embed_basic(self, tmp_docs: Path, tmp_path: Path, monkeypatch, capsys):
+        """测试 embed 命令基本执行"""
+        db_path = tmp_path / "test.db"
+
+        # 添加 collection
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["qmd-py", "--db", str(db_path), "add", "notes", str(tmp_docs)],
+        )
+        assert main() == 0
+
+        # 更新索引
+        monkeypatch.setattr(
+            sys, "argv", ["qmd-py", "--db", str(db_path), "update"]
+        )
+        assert main() == 0
+
+        # 生成 embedding
+        monkeypatch.setattr(
+            sys, "argv", ["qmd-py", "--db", str(db_path), "embed"]
+        )
+        exit_code = main()
+
+        # 如果没有 LLM 后端，应该返回 1，否则返回 0
+        assert exit_code in [0, 1]
+        captured = capsys.readouterr()
+        # 应该显示成功或错误信息
+        assert "embedding" in captured.out.lower() or "无可用" in captured.err
+
+    def test_cmd_context_add_list_remove(self, tmp_docs: Path, tmp_path: Path, monkeypatch, capsys):
+        """测试 context 子命令 CRUD"""
+        db_path = tmp_path / "test.db"
+
+        # 添加 collection
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["qmd-py", "--db", str(db_path), "add", "notes", str(tmp_docs)],
+        )
+        assert main() == 0
+
+        # 添加上下文
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "qmd-py",
+                "--db",
+                str(db_path),
+                "context",
+                "add",
+                "notes",
+                "/docs",
+                "Documentation context",
+            ],
+        )
+        exit_code = main()
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        assert "已添加上下文" in captured.out
+
+        # 列出上下文
+        monkeypatch.setattr(
+            sys, "argv", ["qmd-py", "--db", str(db_path), "context", "list"]
+        )
+        exit_code = main()
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        assert "Documentation" in captured.out
+
+        # 删除上下文
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["qmd-py", "--db", str(db_path), "context", "remove", "notes", "/docs"],
+        )
+        exit_code = main()
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        assert "已删除上下文" in captured.out
+
+    def test_cmd_version(self, tmp_path: Path, monkeypatch, capsys):
+        """测试 version 命令"""
+        db_path = tmp_path / "test.db"
+
+        monkeypatch.setattr(
+            sys, "argv", ["qmd-py", "--db", str(db_path), "version"]
+        )
+        exit_code = main()
+
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        assert "qmd-py version" in captured.out
