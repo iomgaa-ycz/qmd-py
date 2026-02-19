@@ -21,7 +21,8 @@ from qmd.core.config import Collection, NamedCollection
 from qmd.core.db import Database
 from qmd.llm.base import LLMBackend
 from qmd.utils.hashing import content_hash as compute_content_hash
-from qmd.utils.paths import extract_title, get_file_stats, handelize
+from qmd.utils.paths import get_file_stats, handelize
+from qmd.utils.snippet import extract_title
 
 
 class Store:
