@@ -238,8 +238,6 @@ class LlamaCppBackend(LLMBackend):
             Embedding 结果，失败时返回 None
         """
         try:
-            self.model_manager.start_operation()
-
             # 格式化文本（参考 qmd 原版）
             if is_query:
                 formatted_text = format_query_for_embedding(text)
@@ -258,9 +256,6 @@ class LlamaCppBackend(LLMBackend):
         except Exception as e:
             logger.error(f"Embedding 失败: {e}")
             return None
-
-        finally:
-            self.model_manager.end_operation()
 
     def embed_batch(
         self, texts: list[str], titles: list[str | None] | None = None
@@ -314,8 +309,6 @@ class LlamaCppBackend(LLMBackend):
             重排序结果（按相关性降序）
         """
         try:
-            self.model_manager.start_operation()
-
             model = self._get_rerank_model()
 
             # 计算每个文档的相关性分数
@@ -414,9 +407,6 @@ class LlamaCppBackend(LLMBackend):
             # 返回空结果
             return RerankResult(results=[], model=self.model_manager.rerank_model_uri)
 
-        finally:
-            self.model_manager.end_operation()
-
     def expand_query(
         self, query: str, context: str | None = None
     ) -> list[ExpandedQuery]:
@@ -433,8 +423,6 @@ class LlamaCppBackend(LLMBackend):
             扩展查询列表
         """
         try:
-            self.model_manager.start_operation()
-
             model = self._get_generate_model()
 
             # 构造 prompt（参考 qmd 原版）
@@ -514,9 +502,6 @@ class LlamaCppBackend(LLMBackend):
         except Exception as e:
             logger.error(f"Query expansion 失败: {e}，返回原始查询")
             return self._fallback_queries(query)
-
-        finally:
-            self.model_manager.end_operation()
 
     def _fallback_queries(self, query: str) -> list[ExpandedQuery]:
         """
