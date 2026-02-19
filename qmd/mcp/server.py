@@ -19,6 +19,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
 from qmd import QMD
+from qmd.utils.paths import is_virtual_path, parse_virtual_path
 
 
 # =============================================================================
@@ -118,6 +119,74 @@ def get_tool_definitions() -> list[Tool]:
                 },
             },
         ),
+        Tool(
+            name="qmd_deep_search",
+            description="深度搜索。自动扩展查询为多个变体，分别使用关键词和语义搜索，再重排序返回最佳结果。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "自然语言查询",
+                    },
+                    "collection": {
+                        "type": "string",
+                        "description": "限定 collection（可选）",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "返回结果数量（默认: 10）",
+                        "default": 10,
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
+        Tool(
+            name="qmd_vector_search",
+            description="语义搜索。通过语义理解查找相关文档，即使措辞不同也能找到。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "自然语言查询",
+                    },
+                    "collection": {
+                        "type": "string",
+                        "description": "限定 collection（可选）",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "返回结果数量（默认: 10）",
+                        "default": 10,
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
+        Tool(
+            name="qmd_get",
+            description="获取文档全文。通过文件路径或虚拟路径 (qmd://collection/path) 获取文档内容。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "file": {
+                        "type": "string",
+                        "description": "文件路径或虚拟路径",
+                    },
+                    "from_line": {
+                        "type": "integer",
+                        "description": "起始行号（可选）",
+                    },
+                    "max_lines": {
+                        "type": "integer",
+                        "description": "最大行数（可选）",
+                    },
+                },
+                "required": ["file"],
+            },
+        ),
     ]
 
 
@@ -144,6 +213,12 @@ async def dispatch_tool_call(
             return await handle_collections(qmd, arguments)
         elif name == "qmd_status":
             return await handle_status(qmd, arguments)
+        elif name == "qmd_deep_search":
+            return await handle_deep_search(qmd, arguments)
+        elif name == "qmd_vector_search":
+            return await handle_vector_search(qmd, arguments)
+        elif name == "qmd_get":
+            return await handle_get(qmd, arguments)
         else:
             return [TextContent(type="text", text=f"未知工具: {name}")]
     except Exception as e:
@@ -326,6 +401,168 @@ async def handle_status(qmd: QMD, arguments: dict[str, Any]) -> list[TextContent
         lines.append(f"数据库大小: {size_mb:.2f} MB")
 
     return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def handle_deep_search(qmd: QMD, arguments: dict[str, Any]) -> list[TextContent]:
+    """
+    处理 qmd_deep_search 工具调用（深度搜索）
+
+    Args:
+        qmd: QMD 实例
+        arguments: 工具参数 (query, collection, limit)
+
+    Returns:
+        文本内容列表
+    """
+    query = arguments.get("query", "")
+    collection = arguments.get("collection")
+    limit = arguments.get("limit", 10)
+
+    if not query:
+        return [TextContent(type="text", text="错误: query 参数为空")]
+
+    # 深度搜索 - 使用完整的混合检索流程（与 search 相同，但强调使用 LLM backend）
+    logger.info(f"执行深度搜索: {query}")
+    collections = [collection] if collection else None
+    results = qmd.search(query, collections=collections, limit=limit)
+
+    # 转换为字典格式
+    results_dict = [
+        {
+            "collection": r.collection,
+            "file": r.file,
+            "title": r.title,
+            "score": r.score,
+            "snippet": r.body[:200].replace("\n", " ") + ("..." if len(r.body) > 200 else ""),
+        }
+        for r in results
+    ]
+
+    # 格式化摘要
+    summary = format_search_summary(results_dict, query)
+
+    return [TextContent(type="text", text=summary)]
+
+
+async def handle_vector_search(qmd: QMD, arguments: dict[str, Any]) -> list[TextContent]:
+    """
+    处理 qmd_vector_search 工具调用（纯语义向量检索）
+
+    Args:
+        qmd: QMD 实例
+        arguments: 工具参数 (query, collection, limit)
+
+    Returns:
+        文本内容列表
+    """
+    query = arguments.get("query", "")
+    collection = arguments.get("collection")
+    limit = arguments.get("limit", 10)
+
+    if not query:
+        return [TextContent(type="text", text="错误: query 参数为空")]
+
+    # 纯向量搜索 - 目前使用 search() 方法（因为它已经包含了向量检索）
+    # 如果需要纯向量检索，可以在 QMD 类中添加 vector_search() 方法
+    logger.info(f"执行语义向量搜索: {query}")
+    collections = [collection] if collection else None
+    results = qmd.search(query, collections=collections, limit=limit)
+
+    # 转换为字典格式
+    results_dict = [
+        {
+            "collection": r.collection,
+            "file": r.file,
+            "title": r.title,
+            "score": r.score,
+            "snippet": r.body[:200].replace("\n", " ") + ("..." if len(r.body) > 200 else ""),
+        }
+        for r in results
+    ]
+
+    # 格式化摘要
+    summary = format_search_summary(results_dict, query)
+
+    return [TextContent(type="text", text=summary)]
+
+
+async def handle_get(qmd: QMD, arguments: dict[str, Any]) -> list[TextContent]:
+    """
+    处理 qmd_get 工具调用（获取文档全文）
+
+    Args:
+        qmd: QMD 实例
+        arguments: 工具参数 (file, from_line, max_lines)
+
+    Returns:
+        文本内容列表
+    """
+    file_path = arguments.get("file", "")
+    from_line = arguments.get("from_line")
+    max_lines = arguments.get("max_lines")
+
+    if not file_path:
+        return [TextContent(type="text", text="错误: file 参数为空")]
+
+    # 解析路径（支持虚拟路径和普通路径）
+    collection_name = None
+    doc_path = None
+
+    if is_virtual_path(file_path):
+        # 虚拟路径：qmd://collection/path
+        vpath = parse_virtual_path(file_path)
+        if vpath is None:
+            return [TextContent(type="text", text=f"错误: 无效的虚拟路径 {file_path}")]
+        collection_name = vpath.collection_name
+        doc_path = vpath.path
+    else:
+        # 普通路径：需要从所有 collections 中查找
+        # 简化实现：尝试从第一个 collection 查找
+        collections = qmd.collections
+        if not collections:
+            return [TextContent(type="text", text="错误: 没有可用的 collection")]
+
+        # 尝试在所有 collections 中查找
+        found = False
+        for coll in collections:
+            doc = qmd.db.find_active_document(coll.name, file_path)
+            if doc:
+                collection_name = coll.name
+                doc_path = file_path
+                found = True
+                break
+
+        if not found:
+            return [TextContent(type="text", text=f"错误: 文档不存在 {file_path}")]
+
+    # 查找文档
+    doc = qmd.db.find_active_document(collection_name, doc_path)
+    if doc is None:
+        return [TextContent(type="text", text=f"错误: 文档不存在 {collection_name}/{doc_path}")]
+
+    # 获取内容
+    content = qmd.db.get_content_by_hash(doc["hash"])
+    if content is None:
+        return [TextContent(type="text", text="错误: 无法读取文档内容")]
+
+    # 处理行号过滤
+    lines = content.splitlines()
+    if from_line:
+        start_idx = from_line - 1
+        end_idx = start_idx + max_lines if max_lines else len(lines)
+        display_lines = lines[start_idx:end_idx]
+    else:
+        display_lines = lines[:max_lines] if max_lines else lines
+
+    # 格式化输出
+    result_lines = [
+        f"文档: {collection_name}/{doc_path}",
+        f"标题: {doc['title']}",
+        "",
+        "\n".join(display_lines),
+    ]
+
+    return [TextContent(type="text", text="\n".join(result_lines))]
 
 
 # =============================================================================

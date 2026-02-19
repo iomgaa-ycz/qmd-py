@@ -14,9 +14,12 @@ from qmd.mcp.server import (
     format_search_summary,
     get_tool_definitions,
     handle_collections,
+    handle_deep_search,
+    handle_get,
     handle_index,
     handle_search,
     handle_status,
+    handle_vector_search,
 )
 
 
@@ -295,12 +298,15 @@ class TestMCPServer:
         """测试获取工具定义列表"""
         tools = get_tool_definitions()
 
-        assert len(tools) == 4
+        assert len(tools) == 7
         tool_names = [t.name for t in tools]
         assert "qmd_search" in tool_names
         assert "qmd_index" in tool_names
         assert "qmd_collections" in tool_names
         assert "qmd_status" in tool_names
+        assert "qmd_deep_search" in tool_names
+        assert "qmd_vector_search" in tool_names
+        assert "qmd_get" in tool_names
 
     @pytest.mark.asyncio
     async def test_dispatch_tool_call_search(self, qmd_instance: QMD):
@@ -355,3 +361,55 @@ class TestMCPServer:
         assert len(result) == 1
         # 应该返回错误信息（捕获异常）
         assert "错误" in result[0].text or result[0].type == "text"
+
+    @pytest.mark.asyncio
+    async def test_handle_deep_search(self, qmd_instance: QMD):
+        """测试深度搜索处理函数"""
+        result = await handle_deep_search(qmd_instance, {"query": "python"})
+
+        assert len(result) == 1
+        # 应该包含搜索结果或"未找到"
+        assert "结果" in result[0].text or "未找到" in result[0].text
+
+    @pytest.mark.asyncio
+    async def test_handle_vector_search(self, qmd_instance: QMD):
+        """测试向量搜索处理函数"""
+        result = await handle_vector_search(qmd_instance, {"query": "testing"})
+
+        assert len(result) == 1
+        # 应该包含搜索结果或"未找到"
+        assert "结果" in result[0].text or "未找到" in result[0].text
+
+    @pytest.mark.asyncio
+    async def test_handle_get(self, qmd_instance: QMD):
+        """测试获取文档处理函数"""
+        # 通过虚拟路径获取文档
+        result = await handle_get(qmd_instance, {"file": "qmd://docs/doc1.md"})
+
+        assert len(result) == 1
+        # 应该包含文档内容
+        assert "Document 1" in result[0].text or "Python" in result[0].text
+
+    @pytest.mark.asyncio
+    async def test_dispatch_tool_call_deep_search(self, qmd_instance: QMD):
+        """测试 dispatch_tool_call - qmd_deep_search"""
+        result = await dispatch_tool_call(qmd_instance, "qmd_deep_search", {"query": "python"})
+
+        assert len(result) == 1
+        assert "结果" in result[0].text or "未找到" in result[0].text
+
+    @pytest.mark.asyncio
+    async def test_dispatch_tool_call_vector_search(self, qmd_instance: QMD):
+        """测试 dispatch_tool_call - qmd_vector_search"""
+        result = await dispatch_tool_call(qmd_instance, "qmd_vector_search", {"query": "testing"})
+
+        assert len(result) == 1
+        assert "结果" in result[0].text or "未找到" in result[0].text
+
+    @pytest.mark.asyncio
+    async def test_dispatch_tool_call_get(self, qmd_instance: QMD):
+        """测试 dispatch_tool_call - qmd_get"""
+        result = await dispatch_tool_call(qmd_instance, "qmd_get", {"file": "qmd://docs/doc1.md"})
+
+        assert len(result) == 1
+        assert "Document 1" in result[0].text or "Python" in result[0].text
