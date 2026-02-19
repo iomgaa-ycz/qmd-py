@@ -18,7 +18,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
-from qmd import QMD
+from qmd import create_llm_backend, create_store
 from qmd.utils.paths import is_virtual_path, parse_virtual_path
 
 
@@ -191,7 +191,7 @@ def get_tool_definitions() -> list[Tool]:
 
 
 async def dispatch_tool_call(
-    qmd: QMD, name: str, arguments: dict[str, Any]
+    db, store, backend, name: str, arguments: dict[str, Any]
 ) -> list[TextContent]:
     """
     分发工具调用到相应的处理器
@@ -236,8 +236,9 @@ def create_server(db_path: str | Path | None = None) -> Server:
     Returns:
         配置好的 MCP Server 实例
     """
-    # 初始化 QMD 实例
-    qmd = QMD(backend="auto", db_path=db_path)
+    # 初始化 store 和 backend
+    db, store = create_store(db_path)
+    backend = create_llm_backend("auto")
 
     # 创建 MCP 服务器
     server = Server("qmd")
@@ -252,7 +253,7 @@ def create_server(db_path: str | Path | None = None) -> Server:
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         """处理工具调用"""
-        return await dispatch_tool_call(qmd, name, arguments)
+        return await dispatch_tool_call(db, store, backend, name, arguments)
 
     return server
 
@@ -281,8 +282,9 @@ async def handle_search(qmd: QMD, arguments: dict[str, Any]) -> list[TextContent
         return [TextContent(type="text", text="错误: query 参数为空")]
 
     # 调用搜索
+    from qmd import search
     collections = [collection] if collection else None
-    results = qmd.search(query, collections=collections, limit=limit)
+    results = search(db, query, collection=collections[0] if collections else None, limit=limit)
 
     # 转换为字典格式
     results_dict = [
@@ -347,14 +349,16 @@ async def handle_collections(qmd: QMD, arguments: dict[str, Any]) -> list[TextCo
     Returns:
         文本内容列表
     """
-    collections = qmd.collections
+    from qmd.core.config import list_collections
+
+    collections = list_collections()
 
     if not collections:
         return [TextContent(type="text", text="没有 collection")]
 
     lines = [f"共 {len(collections)} 个 collection:\n"]
     for collection in collections:
-        count = qmd.store.get_document_count(collection.name)
+        count = store.get_document_count(collection.name)
         lines.append(f"• {collection.name}")
         lines.append(f"  路径: {collection.path}")
         lines.append(f"  Pattern: {collection.pattern}")
@@ -377,7 +381,10 @@ async def handle_status(qmd: QMD, arguments: dict[str, Any]) -> list[TextContent
     """
     collection = arguments.get("collection")
 
-    collections = qmd.collections
+    from qmd.core.config import list_collections
+
+
+    collections = list_collections()
     total_docs = 0
 
     lines = ["索引状态:\n"]
@@ -389,7 +396,7 @@ async def handle_status(qmd: QMD, arguments: dict[str, Any]) -> list[TextContent
         if collection and coll.name != collection:
             continue
 
-        count = qmd.store.get_document_count(coll.name)
+        count = store.get_document_count(coll.name)
         total_docs += count
         lines.append(f"• {coll.name}: {count} 个文档")
 
@@ -424,7 +431,9 @@ async def handle_deep_search(qmd: QMD, arguments: dict[str, Any]) -> list[TextCo
     # 深度搜索 - 使用完整的混合检索流程（与 search 相同，但强调使用 LLM backend）
     logger.info(f"执行深度搜索: {query}")
     collections = [collection] if collection else None
-    results = qmd.search(query, collections=collections, limit=limit)
+    from qmd import search
+
+    results = search(db, query, collection=collections[0] if collections else None, limit=limit)
 
     # 转换为字典格式
     results_dict = [
@@ -466,7 +475,9 @@ async def handle_vector_search(qmd: QMD, arguments: dict[str, Any]) -> list[Text
     # 如果需要纯向量检索，可以在 QMD 类中添加 vector_search() 方法
     logger.info(f"执行语义向量搜索: {query}")
     collections = [collection] if collection else None
-    results = qmd.search(query, collections=collections, limit=limit)
+    from qmd import search
+
+    results = search(db, query, collection=collections[0] if collections else None, limit=limit)
 
     # 转换为字典格式
     results_dict = [
@@ -518,14 +529,16 @@ async def handle_get(qmd: QMD, arguments: dict[str, Any]) -> list[TextContent]:
     else:
         # 普通路径：需要从所有 collections 中查找
         # 简化实现：尝试从第一个 collection 查找
-        collections = qmd.collections
+        from qmd.core.config import list_collections
+
+        collections = list_collections()
         if not collections:
             return [TextContent(type="text", text="错误: 没有可用的 collection")]
 
         # 尝试在所有 collections 中查找
         found = False
         for coll in collections:
-            doc = qmd.db.find_active_document(coll.name, file_path)
+            doc = db.find_active_document(coll.name, file_path)
             if doc:
                 collection_name = coll.name
                 doc_path = file_path
@@ -536,12 +549,12 @@ async def handle_get(qmd: QMD, arguments: dict[str, Any]) -> list[TextContent]:
             return [TextContent(type="text", text=f"错误: 文档不存在 {file_path}")]
 
     # 查找文档
-    doc = qmd.db.find_active_document(collection_name, doc_path)
+    doc = db.find_active_document(collection_name, doc_path)
     if doc is None:
         return [TextContent(type="text", text=f"错误: 文档不存在 {collection_name}/{doc_path}")]
 
     # 获取内容
-    content = qmd.db.get_content_by_hash(doc["hash"])
+    content = db.get_content_by_hash(doc["hash"])
     if content is None:
         return [TextContent(type="text", text="错误: 无法读取文档内容")]
 

@@ -10,8 +10,18 @@ from pathlib import Path
 
 from loguru import logger
 
-from qmd import QMD
-from qmd.core.config import add_context, list_all_contexts, remove_context
+from qmd import create_llm_backend, create_store, load_config, search
+from qmd.core.config import (
+    add_collection,
+    add_context,
+    list_all_contexts,
+    list_collections,
+    remove_collection,
+    remove_context,
+    rename_collection,
+)
+from qmd.core.document import get_status
+from qmd.core.watcher import CollectionWatcher
 from qmd.utils.paths import is_virtual_path, parse_virtual_path
 
 
@@ -31,22 +41,22 @@ def setup_logging(verbose: bool) -> None:
 
 def cmd_add(args: argparse.Namespace) -> int:
     """添加 collection"""
-    qmd = QMD(backend=args.backend, db_path=args.db)
+    db, store = create_store(args.db)
     try:
-        qmd.add(args.name, args.path, pattern=args.pattern)
+        add_collection(args.name, args.path, pattern=args.pattern)
         print(f"✓ 已添加 collection: {args.name}")
         print(f"  路径: {args.path}")
         print(f"  Pattern: {args.pattern}")
         return 0
     finally:
-        qmd.stop()
+        db.conn.close()
 
 
 def cmd_remove(args: argparse.Namespace) -> int:
     """删除 collection"""
-    qmd = QMD(backend=args.backend, db_path=args.db)
+    db, store = create_store(args.db)
     try:
-        success = qmd.remove(args.name)
+        success = remove_collection(args.name)
         if success:
             print(f"✓ 已删除 collection: {args.name}")
             return 0
@@ -54,40 +64,58 @@ def cmd_remove(args: argparse.Namespace) -> int:
             print(f"✗ Collection 不存在: {args.name}", file=sys.stderr)
             return 1
     finally:
-        qmd.stop()
+        db.conn.close()
 
 
 def cmd_update(args: argparse.Namespace) -> int:
     """更新索引"""
-    qmd = QMD(backend=args.backend, db_path=args.db)
+    db, store = create_store(args.db)
     try:
         collection_name = args.name if hasattr(args, "name") and args.name else None
-        stats = qmd.update(name=collection_name)
 
-        if "error" in stats:
-            print(f"✗ {stats['error']}", file=sys.stderr)
-            return 1
+        # 获取要更新的 collections
+        if collection_name:
+            colls = [c for c in list_collections() if c.name == collection_name]
+            if not colls:
+                print(f"✗ Collection 不存在: {collection_name}", file=sys.stderr)
+                return 1
+        else:
+            colls = list_collections()
+
+        # 汇总统计
+        total_indexed = 0
+        total_updated = 0
+        total_unchanged = 0
+        total_errors = 0
+
+        for coll in colls:
+            logger.info(f"更新 collection: {coll.name}")
+            stat = store.update_collection(coll)
+            total_indexed += stat.get("indexed", 0)
+            total_updated += stat.get("updated", 0)
+            total_unchanged += stat.get("unchanged", 0)
+            total_errors += stat.get("errors", 0)
 
         print(f"✓ 索引更新完成:")
-        print(f"  Collections: {stats['collections']}")
-        print(f"  新增: {stats['indexed']}")
-        print(f"  更新: {stats['updated']}")
-        print(f"  未变化: {stats['unchanged']}")
-        if stats["errors"] > 0:
-            print(f"  错误: {stats['errors']}")
+        print(f"  Collections: {len(colls)}")
+        print(f"  新增: {total_indexed}")
+        print(f"  更新: {total_updated}")
+        print(f"  未变化: {total_unchanged}")
+        if total_errors > 0:
+            print(f"  错误: {total_errors}")
         return 0
     finally:
-        qmd.stop()
+        db.conn.close()
 
 
 def cmd_search(args: argparse.Namespace) -> int:
     """搜索文档"""
     from qmd.cli.formatter import format_search_results
 
-    qmd = QMD(backend=args.backend, db_path=args.db)
+    db, store = create_store(args.db)
     try:
         collections = [args.collection] if args.collection else None
-        results = qmd.search(args.query, collections=collections, limit=args.limit)
+        results = search(db, args.query, collection=collections[0] if collections else None, limit=args.limit)
 
         if not results:
             print("未找到匹配的文档")
@@ -134,14 +162,14 @@ def cmd_search(args: argparse.Namespace) -> int:
 
         return 0
     finally:
-        qmd.stop()
+        db.conn.close()
 
 
 def cmd_list(args: argparse.Namespace) -> int:
     """列出所有 collections"""
-    qmd = QMD(backend=args.backend, db_path=args.db)
+    db, store = create_store(args.db)
     try:
-        collections = qmd.collections
+        collections = list_collections()
 
         if not collections:
             print("没有 collection")
@@ -154,18 +182,19 @@ def cmd_list(args: argparse.Namespace) -> int:
             print(f"  Pattern: {collection.pattern}")
 
             # 获取文档数量
-            count = qmd.store.get_document_count(collection.name)
+            count = store.get_document_count(collection.name)
             print(f"  文档数: {count}")
             print()
 
         return 0
     finally:
-        qmd.stop()
+        db.conn.close()
 
 
 def cmd_watch(args: argparse.Namespace) -> int:
     """启动文件监听"""
-    qmd = QMD(backend=args.backend, db_path=args.db)
+    db, store = create_store(args.db)
+    watcher = None
     try:
         collection_name = args.name if hasattr(args, "name") and args.name else None
 
@@ -175,7 +204,14 @@ def cmd_watch(args: argparse.Namespace) -> int:
         else:
             print(f"监听所有 collections")
 
-        qmd.watch(name=collection_name)
+        # 创建并启动 watcher
+        colls = list_collections() if not collection_name else [c for c in list_collections() if c.name == collection_name]
+        if not colls:
+            print(f"✗ 没有可监听的 collection", file=sys.stderr)
+            return 1
+
+        watcher = CollectionWatcher(store, colls)
+        watcher.start()
 
         print("按 Ctrl+C 停止监听")
         try:
@@ -185,6 +221,8 @@ def cmd_watch(args: argparse.Namespace) -> int:
 
             def signal_handler(sig, frame):
                 print("\n停止监听...")
+                if watcher:
+                    watcher.stop()
                 sys.exit(0)
 
             signal.signal(signal.SIGINT, signal_handler)
@@ -193,9 +231,13 @@ def cmd_watch(args: argparse.Namespace) -> int:
                 time.sleep(1)
         except KeyboardInterrupt:
             print("\n停止监听...")
+            if watcher:
+                watcher.stop()
             return 0
     finally:
-        qmd.stop()
+        if watcher:
+            watcher.stop()
+        db.conn.close()
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -216,43 +258,45 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 def cmd_status(args: argparse.Namespace) -> int:
     """显示索引状态"""
-    qmd = QMD(backend=args.backend, db_path=args.db)
+    db, store = create_store(args.db)
     try:
-        collections = qmd.collections
+        from qmd.core.db import get_db_path
+        db_path = get_db_path() if args.db is None else Path(args.db)
+        collections = list_collections()
         total_docs = 0
 
         print("索引状态:\n")
-        print(f"数据库: {qmd.db_path}")
+        print(f"数据库: {db_path}")
         print(f"Collections: {len(collections)}\n")
 
         for collection in collections:
-            count = qmd.store.get_document_count(collection.name)
+            count = store.get_document_count(collection.name)
             total_docs += count
             print(f"• {collection.name}: {count} 个文档")
 
         print(f"\n总计: {total_docs} 个文档")
 
         # 显示数据库大小
-        if qmd.db_path.exists():
-            size_mb = qmd.db_path.stat().st_size / (1024 * 1024)
+        if db_path.exists():
+            size_mb = db_path.stat().st_size / (1024 * 1024)
             print(f"数据库大小: {size_mb:.2f} MB")
 
         return 0
     finally:
-        qmd.stop()
+        db.conn.close()
 
 
 def cmd_query(args: argparse.Namespace) -> int:
     """深度搜索（hybrid + rerank）"""
     from qmd.cli.formatter import format_search_results
 
-    qmd = QMD(backend=args.backend, db_path=args.db)
+    db, store = create_store(args.db)
     try:
         collections = [args.collection] if args.collection else None
 
         # query 命令强制使用完整的混合检索（如果后端支持）
         logger.info("执行深度搜索（hybrid + rerank）")
-        results = qmd.search(args.query, collections=collections, limit=args.limit)
+        results = search(db, args.query, collection=collections[0] if collections else None, limit=args.limit)
 
         if not results:
             print("未找到匹配的文档")
@@ -299,12 +343,12 @@ def cmd_query(args: argparse.Namespace) -> int:
 
         return 0
     finally:
-        qmd.stop()
+        db.conn.close()
 
 
 def cmd_get(args: argparse.Namespace) -> int:
     """获取单个文档内容"""
-    qmd = QMD(backend=args.backend, db_path=args.db)
+    db, store = create_store(args.db)
     try:
         file_path = args.file
         line_num = None
@@ -338,13 +382,13 @@ def cmd_get(args: argparse.Namespace) -> int:
             doc_path = file_path
 
         # 查找文档
-        doc = qmd.db.find_active_document(collection_name, doc_path)
+        doc = db.find_active_document(collection_name, doc_path)
         if doc is None:
             print(f"✗ 文档不存在: {collection_name}/{doc_path}", file=sys.stderr)
             return 1
 
         # 获取内容
-        content = qmd.db.get_content_by_hash(doc["hash"])
+        content = db.get_content_by_hash(doc["hash"])
         if content is None:
             print(f"✗ 无法读取文档内容", file=sys.stderr)
             return 1
@@ -380,26 +424,27 @@ def cmd_get(args: argparse.Namespace) -> int:
 
         return 0
     finally:
-        qmd.stop()
+        db.conn.close()
 
 
 def cmd_embed(args: argparse.Namespace) -> int:
     """手动生成 embedding"""
-    qmd = QMD(backend=args.backend, db_path=args.db)
+    db, store = create_store(args.db)
     try:
-        if qmd.llm_backend is None:
+        backend = create_llm_backend(args.backend)
+        if backend is None:
             print("✗ 无可用的 LLM 后端，无法生成 embedding", file=sys.stderr)
             return 1
 
         # 如果 --force，清空所有 embedding
         if args.force:
             logger.info("清空所有 embedding...")
-            qmd.db.clear_all_embeddings()
+            db.clear_all_embeddings()
             print("✓ 已清空所有 embedding")
 
         # 生成 embedding
         logger.info("开始生成 embedding...")
-        stats = qmd.store.embed_documents(qmd.llm_backend, force=args.force)
+        stats = store.embed_documents(backend, force=args.force)
 
         print(f"✓ Embedding 生成完成:")
         print(f"  已生成: {stats['embedded']}")
@@ -410,7 +455,7 @@ def cmd_embed(args: argparse.Namespace) -> int:
 
         return 0
     finally:
-        qmd.stop()
+        db.conn.close()
 
 
 def cmd_context_add(args: argparse.Namespace) -> int:
@@ -476,7 +521,7 @@ def cmd_ls(args: argparse.Namespace) -> int:
     """列出 collections 或文件"""
     from qmd.core.config import list_collections
 
-    qmd = QMD(backend=args.backend, db_path=args.db)
+    db, store = create_store(args.db)
     try:
         path_arg = getattr(args, "path", None)
 
@@ -489,14 +534,14 @@ def cmd_ls(args: argparse.Namespace) -> int:
 
             print("Collections:\n")
             for coll in collections:
-                count = qmd.store.get_document_count(coll.name)
+                count = store.get_document_count(coll.name)
                 print(f"  qmd://{coll.name}/  ({count} 个文件)")
             return 0
         else:
             # 列出指定 collection 的文件
             # 简化实现：只支持 collection 名称
             collection_name = path_arg.replace("qmd://", "").rstrip("/")
-            docs = qmd.db.conn.execute(
+            docs = db.conn.execute(
                 """
                 SELECT d.path, d.title, d.modified_at, LENGTH(c.doc) as size
                 FROM documents d
@@ -516,38 +561,38 @@ def cmd_ls(args: argparse.Namespace) -> int:
                 print(f"  {doc['path']}  ({doc['size']} bytes)")
             return 0
     finally:
-        qmd.stop()
+        db.conn.close()
 
 
 def cmd_cleanup(args: argparse.Namespace) -> int:
     """清理数据库"""
     from qmd.core.document import cleanup_orphaned_vectors, delete_inactive_documents, vacuum_database
 
-    qmd = QMD(backend=args.backend, db_path=args.db)
+    db, store = create_store(args.db)
     try:
         print("清理孤立向量...")
-        deleted_vectors = cleanup_orphaned_vectors(qmd.db)
+        deleted_vectors = cleanup_orphaned_vectors(db)
         print(f"  删除 {deleted_vectors} 个孤立向量")
 
         print("删除 inactive 文档...")
-        deleted_docs = delete_inactive_documents(qmd.db)
+        deleted_docs = delete_inactive_documents(db)
         print(f"  删除 {deleted_docs} 个文档")
 
         print("压缩数据库...")
-        vacuum_database(qmd.db)
+        vacuum_database(db)
         print("  ✓ VACUUM 完成")
 
         print("\n清理完成")
         return 0
     finally:
-        qmd.stop()
+        db.conn.close()
 
 
 def cmd_collection_rename(args: argparse.Namespace) -> int:
     """重命名 collection"""
     from qmd.core.config import rename_collection
 
-    qmd = QMD(backend=args.backend, db_path=args.db)
+    db, store = create_store(args.db)
     try:
         old_name = args.old_name
         new_name = args.new_name
@@ -559,11 +604,11 @@ def cmd_collection_rename(args: argparse.Namespace) -> int:
             return 1
 
         # 更新数据库中的 collection 名称
-        qmd.db.conn.execute(
+        db.conn.execute(
             "UPDATE documents SET collection = ? WHERE collection = ?",
             (new_name, old_name),
         )
-        qmd.db.conn.commit()
+        db.conn.commit()
 
         print(f"✓ 已重命名 collection: {old_name} → {new_name}")
         return 0
@@ -571,7 +616,7 @@ def cmd_collection_rename(args: argparse.Namespace) -> int:
         print(f"✗ {e}", file=sys.stderr)
         return 1
     finally:
-        qmd.stop()
+        db.conn.close()
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -591,7 +636,7 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--db",
         type=str,
-        help="数据库路径 (默认: ~/.config/qmd/qmd.db)",
+        help="数据库路径 (默认: ~/.config/qmd/db)",
     )
     parser.add_argument(
         "--verbose",
