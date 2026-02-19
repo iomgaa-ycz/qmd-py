@@ -378,40 +378,106 @@ def find_context_for_path(
     file_path: str
 ) -> str | None:
     """
-    为给定的 collection 和路径查找最匹配的上下文
-    返回最具体的匹配上下文（最长路径前缀匹配）
+    为给定的 collection 和路径查找匹配的上下文（层级继承）
+
+    收集所有匹配的上下文（global + 所有匹配的路径前缀），
+    按照从通用到具体的顺序拼接（使用 \\n\\n 分隔）。
 
     Args:
         collection_name: Collection 名称
         file_path: 文件路径
 
     Returns:
-        匹配的上下文文本，如果没有匹配则返回全局上下文或 None
+        拼接后的上下文文本，如果没有任何匹配则返回 None
     """
     config = load_config()
     collection = config.collections.get(collection_name)
 
-    if collection is None or collection.context is None:
+    if collection is None:
         return config.global_context
 
-    # 查找所有匹配的前缀
-    matches: list[tuple[str, str]] = []  # (prefix, context)
+    # 收集所有匹配的上下文（从通用到具体）
+    contexts: list[str] = []
 
-    for prefix, context in collection.context.items():
-        # 规范化路径以进行比较
+    # 1. 添加全局上下文（如果有）
+    if config.global_context:
+        contexts.append(config.global_context)
+
+    # 2. 添加所有匹配的路径上下文
+    if collection.context:
         normalized_path = file_path if file_path.startswith("/") else f"/{file_path}"
-        normalized_prefix = prefix if prefix.startswith("/") else f"/{prefix}"
 
-        if normalized_path.startswith(normalized_prefix):
-            matches.append((normalized_prefix, context))
+        # 收集所有匹配的前缀
+        matching_contexts: list[tuple[str, str]] = []  # (prefix, context)
+        for prefix, context in collection.context.items():
+            normalized_prefix = prefix if prefix.startswith("/") else f"/{prefix}"
+            if normalized_path.startswith(normalized_prefix):
+                matching_contexts.append((normalized_prefix, context))
 
-    # 返回最具体的匹配（最长前缀）
-    if matches:
-        matches.sort(key=lambda x: len(x[0]), reverse=True)
-        return matches[0][1]
+        # 按前缀长度排序（从短到长，即从通用到具体）
+        matching_contexts.sort(key=lambda x: len(x[0]))
 
-    # 回退到全局上下文
-    return config.global_context
+        # 添加所有匹配的上下文
+        for _, context in matching_contexts:
+            contexts.append(context)
+
+    # 3. 拼接所有上下文（用双换行符分隔）
+    return "\n\n".join(contexts) if contexts else None
+
+
+def find_context_for_file(
+    file_path: str
+) -> str | None:
+    """
+    为给定的文件路径查找匹配的上下文（支持虚拟路径和文件系统路径）
+
+    Args:
+        file_path: 虚拟路径（qmd://collection/path）或文件系统绝对路径
+
+    Returns:
+        拼接后的上下文文本，如果没有任何匹配则返回 None
+    """
+    if not file_path:
+        return None
+
+    # 导入 VirtualPath 工具（避免循环导入）
+    from qmd.utils.paths import is_virtual_path, parse_virtual_path
+
+    collection_name: str | None = None
+    relative_path: str | None = None
+
+    # 1. 尝试解析虚拟路径格式: qmd://collection/path
+    if is_virtual_path(file_path):
+        parsed = parse_virtual_path(file_path)
+        if parsed:
+            collection_name = parsed.collection_name
+            relative_path = parsed.path
+    else:
+        # 2. 文件系统路径：查找属于哪个 collection
+        collections = list_collections()
+        for coll in collections:
+            if not coll.path:
+                continue
+
+            coll_path = Path(coll.path).resolve()
+            try:
+                file_resolved = Path(file_path).resolve()
+                # 检查文件路径是否在 collection 路径下
+                if file_resolved == coll_path or coll_path in file_resolved.parents:
+                    collection_name = coll.name
+                    # 提取相对路径
+                    relative_path = str(file_resolved.relative_to(coll_path))
+                    break
+            except (ValueError, OSError):
+                # 路径解析失败（例如路径不存在或无法计算相对路径）
+                continue
+
+    # 3. 如果无法确定 collection，返回 None
+    if not collection_name or relative_path is None:
+        return None
+
+    # 4. 调用 find_context_for_path() 获取层级继承的 context
+    return find_context_for_path(collection_name, relative_path)
 
 
 # =============================================================================

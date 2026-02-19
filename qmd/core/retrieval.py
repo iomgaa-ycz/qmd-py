@@ -16,6 +16,7 @@ from typing import Any
 from loguru import logger
 
 from qmd.core.chunking import chunk_document
+from qmd.core.config import find_context_for_path
 from qmd.core.db import Database
 from qmd.llm.base import LLMBackend, RerankDocument
 
@@ -50,6 +51,7 @@ class SearchResult:
     collection: str  # 所属集合
     hash: str  # 内容哈希
     pos: int = 0  # 最佳 chunk 的位置
+    context: str | None = None  # 层级继承的上下文（global + path-specific）
 
 
 @dataclass
@@ -140,14 +142,24 @@ def bm25_search(
         bm25_score = row["bm25_score"]
         score = abs(bm25_score) / (1 + abs(bm25_score))
 
+        # 提取 collection 和 相对路径
+        filepath = row["filepath"]
+        coll = row["collection"]
+        # filepath 格式是 "collection/path"，提取 path 部分
+        rel_path = filepath.split("/", 1)[1] if "/" in filepath else filepath
+
+        # 获取层级继承的 context
+        ctx = find_context_for_path(coll, rel_path)
+
         results.append(
             SearchResult(
-                file=row["filepath"],
+                file=filepath,
                 title=row["title"],
                 body=row["body"],
                 score=score,
-                collection=row["collection"],
+                collection=coll,
                 hash=row["hash"],
+                context=ctx,
             )
         )
 
@@ -262,15 +274,26 @@ def vector_search(
     for item in sorted_results:
         # 余弦相似度 = 1 - 距离
         score = 1 - item["distance"]
+
+        # 提取 collection 和 相对路径
+        filepath = item["filepath"]
+        coll = item["collection"]
+        # filepath 格式是 "collection/path"，提取 path 部分
+        rel_path = filepath.split("/", 1)[1] if "/" in filepath else filepath
+
+        # 获取层级继承的 context
+        ctx = find_context_for_path(coll, rel_path)
+
         results.append(
             SearchResult(
-                file=item["filepath"],
+                file=filepath,
                 title=item["title"],
                 body=item["body"],
                 score=score,
-                collection=item["collection"],
+                collection=coll,
                 hash=item["hash"],
                 pos=item["pos"],
+                context=ctx,
             )
         )
 
@@ -597,6 +620,10 @@ def search(
             except:
                 pass
 
+            # 获取 context
+            rel_path = parts[1] if len(parts) > 1 else ""
+            ctx = find_context_for_path(collection_name, rel_path) if collection_name else None
+
             blended_results.append(
                 SearchResult(
                     file=rerank_item.file,
@@ -606,6 +633,7 @@ def search(
                     collection=collection_name,
                     hash=content_hash,
                     pos=best_chunk_pos,
+                    context=ctx,
                 )
             )
 
@@ -630,6 +658,10 @@ def search(
             except:
                 pass
 
+            # 获取 context
+            rel_path = parts[1] if len(parts) > 1 else ""
+            ctx = find_context_for_path(collection_name, rel_path) if collection_name else None
+
             blended_results.append(
                 SearchResult(
                     file=cand.file,
@@ -638,6 +670,7 @@ def search(
                     score=cand.score,
                     collection=collection_name,
                     hash=content_hash,
+                    context=ctx,
                 )
             )
 
