@@ -31,7 +31,7 @@ dev = [
 ]
 
 [project.scripts]
-qmd-py = "qmd.__main__:main"
+qmd = "qmd.cli.main:main"
 
 [tool.setuptools.packages.find]
 include = ["qmd*"]

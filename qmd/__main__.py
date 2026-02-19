@@ -1,8 +1,5 @@
-"""CLI 入口点"""
-
-def main():
-    """主函数"""
-    pass
+"""QMD-Py CLI 入口点"""
+from qmd.cli.main import main
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
