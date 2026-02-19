@@ -109,11 +109,15 @@ def cmd_update(args: argparse.Namespace) -> int:
 
 
 def cmd_search(args: argparse.Namespace) -> int:
-    """搜索文档"""
+    """搜索文档（search 和 query 命令共用）"""
     from qmd.cli.formatter import format_search_results
 
     db, store = create_store(args.db)
     try:
+        # query 命令记录深度搜索日志
+        if args.command == "query":
+            logger.info("执行深度搜索（hybrid + rerank）")
+
         collections = [args.collection] if args.collection else None
         results = search(db, args.query, collection=collections[0] if collections else None, limit=args.limit)
 
@@ -280,66 +284,6 @@ def cmd_status(args: argparse.Namespace) -> int:
         if db_path.exists():
             size_mb = db_path.stat().st_size / (1024 * 1024)
             print(f"数据库大小: {size_mb:.2f} MB")
-
-        return 0
-    finally:
-        db.conn.close()
-
-
-def cmd_query(args: argparse.Namespace) -> int:
-    """深度搜索（hybrid + rerank）"""
-    from qmd.cli.formatter import format_search_results
-
-    db, store = create_store(args.db)
-    try:
-        collections = [args.collection] if args.collection else None
-
-        # query 命令强制使用完整的混合检索（如果后端支持）
-        logger.info("执行深度搜索（hybrid + rerank）")
-        results = search(db, args.query, collection=collections[0] if collections else None, limit=args.limit)
-
-        if not results:
-            print("未找到匹配的文档")
-            return 0
-
-        # 使用 formatter 输出
-        output_format = getattr(args, "format", "cli")
-        if output_format and output_format != "cli":
-            # 转换为 dict
-            results_dict = [
-                {
-                    "file": r.file,
-                    "title": r.title,
-                    "body": r.body,
-                    "score": r.score,
-                    "collection": r.collection,
-                    "hash": r.hash,
-                    "pos": r.pos,
-                    "context": r.context,
-                }
-                for r in results
-            ]
-            opts = {
-                "query": args.query,
-                "full": getattr(args, "full", False),
-                "line_numbers": getattr(args, "line_numbers", False),
-            }
-            output = format_search_results(results_dict, output_format, opts)
-            print(output)
-        else:
-            # CLI 格式（原有逻辑）
-            print(f"找到 {len(results)} 个结果:\n")
-            for i, result in enumerate(results, 1):
-                print(f"{i}. {result.collection}/{result.file}")
-                print(f"   分数: {result.score:.3f}")
-                print(f"   标题: {result.title}")
-
-                # 显示摘要（前 200 个字符）
-                snippet = result.body[:200].replace("\n", " ")
-                if len(result.body) > 200:
-                    snippet += "..."
-                print(f"   摘要: {snippet}")
-                print()
 
         return 0
     finally:
@@ -912,7 +856,7 @@ def main() -> int:
         "watch": cmd_watch,
         "serve": cmd_serve,
         "status": cmd_status,
-        "query": cmd_query,
+        "query": cmd_search,
         "get": cmd_get,
         "embed": cmd_embed,
         "version": cmd_version,
