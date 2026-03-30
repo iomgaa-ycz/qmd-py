@@ -9,6 +9,8 @@
 整合模块：chunking、db、config、llm
 """
 
+import json as _json
+
 from datetime import datetime, timezone
 from glob import glob
 from pathlib import Path
@@ -47,6 +49,7 @@ class Store:
         collection_name: str,
         file_path: str,
         content: str,
+        metadata: dict | None = None,
     ) -> dict[str, Any]:
         """
         索引单个文档
@@ -69,6 +72,9 @@ class Store:
         if not content.strip():
             logger.debug(f"跳过空文档: {file_path}")
             return {"status": "skipped", "reason": "empty"}
+
+        # 序列化 metadata
+        metadata_json = _json.dumps(metadata or {}, ensure_ascii=False)
 
         # 计算 content hash
         content_hash = compute_content_hash(content)
@@ -134,6 +140,7 @@ class Store:
                 content_hash,
                 created_at,
                 modified_at,
+                metadata_json,
             )
 
             logger.info(f"索引新文档: {file_path}")
@@ -300,6 +307,10 @@ class Store:
         if force:
             logger.warning("强制重新生成 embedding（清空现有向量）")
             self.db.clear_all_embeddings()
+
+        if llm_backend is None:
+            logger.warning("没有可用的 LLM 后端，跳过 embedding 生成")
+            return {"embedded": 0, "errors": 0}
 
         # 获取需要 embedding 的 hash
         hashes_to_embed = self.db.get_hashes_for_embedding()

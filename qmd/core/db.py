@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS documents (
     created_at TEXT NOT NULL,
     modified_at TEXT NOT NULL,
     active INTEGER NOT NULL DEFAULT 1,
+    metadata TEXT NOT NULL DEFAULT '{}',
     FOREIGN KEY (hash) REFERENCES content(hash) ON DELETE CASCADE,
     UNIQUE(collection, path)
 );
@@ -161,6 +162,11 @@ def init_schema(conn: sqlite3.Connection) -> None:
     不包括 vectors_vec（维度需运行时确定，由 ensure_vec_table 处理）。
     """
     conn.executescript(_SCHEMA_SQL)
+    # 旧库迁移：补充 metadata 列
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(documents)").fetchall()}
+    if "metadata" not in cols:
+        conn.execute("ALTER TABLE documents ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'")
+        conn.commit()
     logger.debug("数据库 schema 初始化完成")
 
 
@@ -261,6 +267,7 @@ class Database:
         content_hash: str,
         created_at: str,
         modified_at: str,
+        metadata: str = "{}",
     ) -> None:
         """插入文档记录
 
@@ -273,18 +280,20 @@ class Database:
             content_hash: 内容哈希
             created_at: 创建时间
             modified_at: 修改时间
+            metadata: JSON 字符串形式的附加元数据
         """
         self.conn.execute(
             """
-            INSERT INTO documents (collection, path, title, hash, created_at, modified_at, active)
-            VALUES (?, ?, ?, ?, ?, ?, 1)
+            INSERT INTO documents (collection, path, title, hash, created_at, modified_at, active, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?)
             ON CONFLICT(collection, path) DO UPDATE SET
                 title = excluded.title,
                 hash = excluded.hash,
                 modified_at = excluded.modified_at,
-                active = 1
+                active = 1,
+                metadata = excluded.metadata
             """,
-            (collection, path, title, content_hash, created_at, modified_at),
+            (collection, path, title, content_hash, created_at, modified_at, metadata),
         )
         self.conn.commit()
 
@@ -370,20 +379,45 @@ class Database:
         ).fetchall()
         return [row["path"] for row in rows]
 
-    def get_document_count(self, collection: str) -> int:
+    def get_document_count(self, collection: str, filters: dict | None = None) -> int:
         """获取集合中活跃文档数量
 
         Args:
             collection: 集合名称
+            filters: metadata 过滤条件（可选）
 
         Returns:
             文档数量
         """
-        row = self.conn.execute(
-            "SELECT COUNT(*) as cnt FROM documents WHERE collection = ? AND active = 1",
-            (collection,),
-        ).fetchone()
+        import json
+        where_clauses = ["collection = ?", "active = 1"]
+        params: list[Any] = [collection]
+        for key, value in (filters or {}).items():
+            where_clauses.append(f"json_extract(metadata, '$.{key}') = ?")
+            params.append(value)
+        sql = f"SELECT COUNT(*) as cnt FROM documents WHERE {' AND '.join(where_clauses)}"
+        row = self.conn.execute(sql, params).fetchone()
         return row["cnt"] if row else 0
+
+    def delete_documents(self, collection: str, filters: dict) -> int:
+        """按 metadata 条件删除活跃文档（标记为 inactive）。
+
+        Args:
+            collection: 集合名称
+            filters: metadata 过滤条件（必填）
+
+        Returns:
+            标记为 inactive 的文档数
+        """
+        where_clauses = ["collection = ?", "active = 1"]
+        params: list[Any] = [collection]
+        for key, value in filters.items():
+            where_clauses.append(f"json_extract(metadata, '$.{key}') = ?")
+            params.append(value)
+        sql = f"UPDATE documents SET active = 0 WHERE {' AND '.join(where_clauses)}"
+        cursor = self.conn.execute(sql, params)
+        self.conn.commit()
+        return cursor.rowcount
 
     # === Embedding 操作 ===
 
