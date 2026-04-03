@@ -13,6 +13,7 @@ from qmd.core.db import (
     init_schema,
     open_database,
 )
+from qmd.utils.hashing import content_hash
 
 
 class TestOpenDatabase:
@@ -238,4 +239,61 @@ class TestLLMCache:
         # 验证都 miss
         assert db.get_cached_result(key1) is None
         assert db.get_cached_result(key2) is None
+        conn.close()
+
+
+class TestEmbeddingDeduplication:
+    """Embedding 去重与幂等写入测试。"""
+
+    def test_get_hashes_for_embedding_deduplicates_active_documents_by_hash(self) -> None:
+        """相同内容但不同 path 的活跃文档只应返回一条待 embedding 记录。"""
+        from datetime import datetime, timezone
+
+        conn = open_database(":memory:")
+        init_schema(conn)
+        db = Database(conn)
+
+        content = "duplicate fragment text"
+        hashed = content_hash(content)
+        now = datetime.now(timezone.utc).isoformat()
+
+        db.insert_content(hashed, content, now)
+        db.insert_document("test", "doc-a", "Doc A", hashed, now, now, "{}")
+        db.insert_document("test", "doc-b", "Doc B", hashed, now, now, "{}")
+
+        pending = db.get_hashes_for_embedding()
+
+        assert len(pending) == 1
+        assert pending[0]["hash"] == hashed
+        assert pending[0]["content"] == content
+
+        conn.close()
+
+    def test_insert_embedding_is_idempotent_for_same_hash_seq(self) -> None:
+        """重复写入同一个 hash_seq 不应产生重复向量行。"""
+        from datetime import datetime, timezone
+
+        conn = open_database(":memory:")
+        init_schema(conn)
+        ensure_vec_table(conn, 2)
+        db = Database(conn)
+
+        hashed = content_hash("same content")
+        now = datetime.now(timezone.utc).isoformat()
+
+        db.insert_embedding(hashed, 0, 0, [0.1, 0.2], "demo-model", now)
+        db.insert_embedding(hashed, 0, 0, [0.3, 0.4], "demo-model", now)
+
+        content_vector_count = conn.execute(
+            "SELECT COUNT(*) FROM content_vectors WHERE hash = ? AND seq = 0",
+            (hashed,),
+        ).fetchone()[0]
+        vec_rowid_count = conn.execute(
+            "SELECT COUNT(*) FROM vectors_vec_rowids WHERE id = ?",
+            (f"{hashed}_0",),
+        ).fetchone()[0]
+
+        assert content_vector_count == 1
+        assert vec_rowid_count == 1
+
         conn.close()
