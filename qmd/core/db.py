@@ -457,7 +457,11 @@ class Database:
 
         # 插入 vectors_vec
         self.conn.execute(
-            "INSERT OR REPLACE INTO vectors_vec (hash_seq, embedding) VALUES (?, ?)",
+            "DELETE FROM vectors_vec WHERE hash_seq = ?",
+            (hash_seq,),
+        )
+        self.conn.execute(
+            "INSERT INTO vectors_vec (hash_seq, embedding) VALUES (?, ?)",
             (hash_seq, embedding_bytes),
         )
 
@@ -473,11 +477,12 @@ class Database:
         """
         rows = self.conn.execute(
             """
-            SELECT DISTINCT c.hash, c.doc as content, d.path
+            SELECT c.hash, c.doc as content, MIN(d.path) as path
             FROM content c
             JOIN documents d ON c.hash = d.hash
             LEFT JOIN content_vectors cv ON c.hash = cv.hash
             WHERE d.active = 1 AND cv.hash IS NULL
+            GROUP BY c.hash, c.doc
             """
         ).fetchall()
 

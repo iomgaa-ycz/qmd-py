@@ -21,6 +21,7 @@ from qmd.core.retrieval import (
 )
 from qmd.core.store import Store
 from qmd.llm.sentence_tf import SentenceTransformerBackend
+from qmd.utils.hashing import content_hash
 
 
 class TestBM25Search:
@@ -305,6 +306,32 @@ class TestVectorSearch:
         # 检查没有重复的文件
         files = [r.file for r in results]
         assert len(files) == len(set(files))
+
+    def test_vector_search_returns_multiple_documents_for_shared_embedding(self):
+        """相同内容共享一份 embedding 时，仍应返回多个文档。"""
+        from datetime import datetime, timezone
+
+        conn = open_database(":memory:")
+        init_schema(conn)
+        ensure_vec_table(conn, 2)
+        db = Database(conn)
+
+        content = "shared fragment text"
+        hashed = content_hash(content)
+        now = datetime.now(timezone.utc).isoformat()
+
+        db.insert_content(hashed, content, now)
+        db.insert_document("test", "audit-point-a", "Audit Point A", hashed, now, now, "{}")
+        db.insert_document("test", "audit-point-b", "Audit Point B", hashed, now, now, "{}")
+        db.insert_embedding(hashed, 0, 0, [0.1, 0.2], "demo-model", now)
+
+        results = vector_search(db, [0.1, 0.2], collection="test", limit=10)
+
+        assert len(results) == 2
+        assert {item.file for item in results} == {
+            "test/audit-point-a",
+            "test/audit-point-b",
+        }
 
 
 class TestReciprocalRankFusion:
