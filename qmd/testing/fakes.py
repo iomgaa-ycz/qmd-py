@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import copy
 import threading
 from dataclasses import dataclass, field
 from typing import Any
@@ -159,18 +160,18 @@ class FakeCollection:
                         f"实际 {type(d[key]).__name__}"
                     )
 
-        import copy
-
         with self._lock:
             # deepcopy snapshot 用于失败回滚（_lock 为 RLock，可重入）
             snapshot_docs = copy.deepcopy(self._docs)
             snapshot_chunks = copy.deepcopy(self._chunks)
+            snapshot_dirty = self._bm25_dirty
             try:
                 for d in docs:
                     self.add_document(d["document_id"], d["markdown"], d["metadata"])
             except Exception:
                 self._docs = snapshot_docs
                 self._chunks = snapshot_chunks
+                self._bm25_dirty = snapshot_dirty
                 raise
 
     def info(self) -> CollectionInfo:
