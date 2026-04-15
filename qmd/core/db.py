@@ -71,7 +71,9 @@ def open_connection(db_path: str | Path) -> sqlite3.Connection:
     _check_sqlite_version()
     p = Path(db_path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(p), isolation_level=None)  # autocommit：事务由调用方（如 collection.py）显式 BEGIN/COMMIT
+    # isolation_level=None：autocommit，事务由调用方（collection.py）显式 BEGIN/COMMIT
+    # check_same_thread=False：允许多线程使用；sqlite3 自身的串行化由 collection.py 的 Lock 保障
+    conn = sqlite3.connect(str(p), isolation_level=None, check_same_thread=False)
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)

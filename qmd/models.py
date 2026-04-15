@@ -117,14 +117,16 @@ class QmdClient(Protocol):
 
 
 def connect(db_path: str | Path | None = None) -> QmdClient:
-    """工厂函数：创建一个 QmdClient 实例。
+    """工厂函数：创建一个 SqliteQmdClient 实例。
 
-    M0 期间返回 FakeQmdClient（纯内存），db_path 被忽略并发 warning。
-    M1 将切换为 SqliteQmdClient，外部调用不感知。
+    db_path 解析顺序：参数 > 环境变量 QMD_DB_PATH > ~/.qmd/db.sqlite。
+    首次连接自动创建父目录 + schema。
     """
-    from qmd.testing.fakes import FakeQmdClient
+    import os
 
-    if db_path is not None:
-        from loguru import logger
-        logger.warning("M0: db_path={} 被忽略，FakeQmdClient 是纯内存实现", db_path)
-    return FakeQmdClient()
+    from qmd.core.client import SqliteQmdClient
+
+    if db_path is None:
+        env = os.environ.get("QMD_DB_PATH")
+        db_path = Path(env) if env else Path.home() / ".qmd" / "db.sqlite"
+    return SqliteQmdClient(Path(db_path))

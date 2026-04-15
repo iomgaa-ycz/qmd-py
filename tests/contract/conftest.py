@@ -14,11 +14,19 @@ import pytest
 from qmd.models import QmdClient
 
 
-@pytest.fixture
-def qmd_client_factory() -> Callable[[], QmdClient]:
-    """默认注入 FakeQmdClient。M1 后会新增一个参数化 fixture 同时跑 Sqlite。"""
-    from qmd.testing.fakes import FakeQmdClient
-    return lambda: FakeQmdClient()
+@pytest.fixture(params=["fake", "sqlite"])
+def qmd_client_factory(request, tmp_path):
+    """参数化：每个契约测试在 [fake] 和 [sqlite] 各跑一遍。"""
+    backend = request.param
+    if backend == "fake":
+        from qmd.testing import FakeQmdClient
+        def factory():
+            return FakeQmdClient()
+    else:
+        from qmd.core.client import SqliteQmdClient
+        def factory():
+            return SqliteQmdClient(tmp_path / "contract.sqlite")
+    yield factory
 
 
 @pytest.fixture

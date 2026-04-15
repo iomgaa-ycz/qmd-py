@@ -4,8 +4,17 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 
 from qmd.core.embedding import Embedder
+
+
+@pytest.fixture(autouse=True)
+def _reset_embedder_cache():
+    """单测之间重置类级共享模型缓存，防止 mock 跨测试串台。"""
+    Embedder._shared_model = None
+    yield
+    Embedder._shared_model = None
 
 
 def test_embedder_dim_and_model_name_constants():

@@ -11,8 +11,14 @@ import pytest
 from deepdiff import DeepDiff
 
 
+@pytest.fixture(autouse=True)
+def _isolate_cli_db(tmp_path, monkeypatch):
+    """每个 CLI 测试用独立 tmp SQLite，避免 ~/.qmd/db.sqlite 状态串台。"""
+    monkeypatch.setenv("QMD_DB_PATH", str(tmp_path / "cli.sqlite"))
+
+
 def _run_cli(*args: str) -> tuple[int, dict | list, str]:
-    """子进程跑 qmd CLI，返回 (exit_code, stdout_json, stderr)。"""
+    """子进程跑 qmd CLI，返回 (exit_code, stdout_json, stderr)。子进程继承 QMD_DB_PATH。"""
     proc = subprocess.run(
         [sys.executable, "-m", "qmd", *args],
         capture_output=True,
