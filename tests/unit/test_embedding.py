@@ -59,14 +59,14 @@ def test_model_loaded_lazily_once():
 
 def test_batch_size_auto_gpu():
     """torch.cuda.is_available()=True → batch_size=64。"""
-    with patch("torch.cuda.is_available", return_value=True):
+    with patch("qmd.core.embedding.torch.cuda.is_available", return_value=True):
         e = Embedder(batch_size="auto")
         assert e.batch_size == 64
 
 
 def test_batch_size_auto_cpu():
     """torch.cuda.is_available()=False → batch_size=16。"""
-    with patch("torch.cuda.is_available", return_value=False):
+    with patch("qmd.core.embedding.torch.cuda.is_available", return_value=False):
         e = Embedder(batch_size="auto")
         assert e.batch_size == 16
 
@@ -78,7 +78,7 @@ def test_batch_size_explicit_int():
 
 
 def test_embed_uses_instance_batch_size():
-    """embed() 用 self.batch_size 而非默认 32。"""
+    """embed() 调用时把 self.batch_size 传给底层 encode。"""
     e = Embedder(batch_size=7)
     fake_model = MagicMock()
     fake_model.encode = MagicMock(return_value=np.zeros((1, 1024), dtype=np.float32))

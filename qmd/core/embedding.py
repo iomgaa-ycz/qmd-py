@@ -11,12 +11,12 @@ from __future__ import annotations
 import threading
 from typing import Any, ClassVar, Literal
 
+import torch
 from loguru import logger
 
 
 def _auto_batch_size() -> int:
     """GPU → 64；CPU → 16（避免 CPU OOM）。"""
-    import torch
     return 64 if torch.cuda.is_available() else 16
 
 
@@ -29,8 +29,13 @@ class Embedder:
     _shared_lock: ClassVar[threading.Lock] = threading.Lock()
 
     def __init__(self, batch_size: int | Literal["auto"] = "auto") -> None:
-        """:param batch_size: int 或 'auto'（auto → GPU=64/CPU=16）。"""
-        self.batch_size: int = _auto_batch_size() if batch_size == "auto" else batch_size
+        """:param batch_size: int 或 'auto'（auto → GPU=64/CPU=16）。构造后只读。"""
+        self._batch_size: int = _auto_batch_size() if batch_size == "auto" else batch_size
+
+    @property
+    def batch_size(self) -> int:
+        """只读：构造后不可变，防止跨 Collection 共享的 Embedder 被意外修改。"""
+        return self._batch_size
 
     def _load_model(self) -> Any:
         """加载模型。子类或测试可 patch 本方法以注入替身。"""
