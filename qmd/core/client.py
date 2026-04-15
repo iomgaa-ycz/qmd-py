@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from qmd.core.collection import SqliteCollection
+from qmd.core.config import QmdConfig
 from qmd.core.db import open_connection
 from qmd.core.embedding import Embedder
 from qmd.models import CollectionInfo
@@ -19,11 +20,19 @@ class SqliteQmdClient:
     连接生命周期：构造时打开，close() 后不可再用。
     """
 
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(
+        self,
+        db_path: str | Path,
+        config_overrides: dict | None = None,
+    ) -> None:
         self._db_path = Path(db_path)
+        self.config: QmdConfig = QmdConfig.load(
+            db_path=self._db_path,
+            config_overrides=config_overrides,
+        )
         self._conn: sqlite3.Connection = open_connection(self._db_path)
         self._lock = threading.Lock()
-        self._embedder = Embedder()
+        self._embedder = Embedder(batch_size=self.config.embedding.batch_size)
         self._collections: dict[str, SqliteCollection] = {}
 
     def collection(self, name: str) -> SqliteCollection:
@@ -40,6 +49,7 @@ class SqliteQmdClient:
                     name=name,
                     lock=self._lock,
                     embedder=self._embedder,
+                    config=self.config,
                 )
             return self._collections[name]
 

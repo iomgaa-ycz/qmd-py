@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, ValidationError
+import torch
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 
 class ConfigError(Exception):
@@ -30,7 +31,15 @@ class EmbeddingConfig(BaseModel):
     backend: Literal["sentence_tf"] = "sentence_tf"
     model_name: str = "Qwen/Qwen3-Embedding-0.6B"
     dim: int = 1024
-    batch_size: int | Literal["auto"] = "auto"
+    batch_size: int = 64  # "auto" 在 validator 中解析；默认值会被覆盖
+
+    @field_validator("batch_size", mode="before")
+    @classmethod
+    def _resolve_auto(cls, v: object) -> int:
+        """将 'auto' 解析为 GPU=64/CPU=16。"""
+        if v == "auto":
+            return 64 if torch.cuda.is_available() else 16
+        return int(v)  # type: ignore[arg-type]
 
 
 class RerankConfig(BaseModel):

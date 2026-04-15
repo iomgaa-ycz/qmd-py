@@ -12,17 +12,10 @@ import time
 from typing import Any
 
 from qmd.core.chunking import chunk_document
+from qmd.core.config import QmdConfig
 from qmd.core.embedding import Embedder
 from qmd.core.retrieval import rrf_fuse
 from qmd.models import ChunkRef, CollectionInfo, SearchResult
-
-
-# 硬编码常量（M2 迁 qmd.yaml）
-CHUNK_SIZE_TOKENS = 512
-CHUNK_OVERLAP_TOKENS = 64
-RRF_K = 60
-BM25_TOP_K = 20
-VECTOR_TOP_K = 20
 
 def _vec_to_sqlite_literal(vec: list[float]) -> str:
     """sqlite-vec 的 MATCH 接受 JSON array 字符串。"""
@@ -38,11 +31,13 @@ class SqliteCollection:
         name: str,
         lock: threading.Lock,
         embedder: Embedder,
+        config: QmdConfig,
     ) -> None:
         self.name = name
         self._conn = conn
         self._lock = lock
         self._embedder = embedder
+        self.config = config
 
     # --- mutations ---
 
@@ -55,7 +50,7 @@ class SqliteCollection:
         """新增或更新文档（幂等 upsert）。先删旧 chunks 再插新 chunks。"""
         meta_json = json.dumps(metadata or {}, ensure_ascii=False)
         now = int(time.time() * 1000)
-        chunks = chunk_document(markdown, size=CHUNK_SIZE_TOKENS, overlap=CHUNK_OVERLAP_TOKENS)
+        chunks = chunk_document(markdown, size=self.config.chunking.size, overlap=self.config.chunking.overlap)
 
         embeddings: list[list[float]] = []
         if chunks:
@@ -198,7 +193,7 @@ class SqliteCollection:
             """
             bm25_rows = self._conn.execute(
                 bm25_sql,
-                (self.name, query, *filter_params, BM25_TOP_K),
+                (self.name, query, *filter_params, self.config.retrieval.bm25_top_k),
             ).fetchall()
             bm25_ids = [r[0] for r in bm25_rows]
 
@@ -211,11 +206,11 @@ class SqliteCollection:
             """
             vec_rows = self._conn.execute(
                 vec_sql,
-                (self.name, _vec_to_sqlite_literal(query_vec), VECTOR_TOP_K, *filter_params),
+                (self.name, _vec_to_sqlite_literal(query_vec), self.config.retrieval.vector_top_k, *filter_params),
             ).fetchall()
             vec_ids = [r[0] for r in vec_rows]
 
-            fused = rrf_fuse([bm25_ids, vec_ids], k=RRF_K)[:top_k]
+            fused = rrf_fuse([bm25_ids, vec_ids], k=self.config.retrieval.rrf_k)[:top_k]
             if not fused:
                 return []
 

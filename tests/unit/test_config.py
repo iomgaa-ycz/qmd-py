@@ -16,7 +16,7 @@ def test_defaults_when_no_yaml(tmp_path: Path):
     assert cfg.chunking.overlap == 64
     assert cfg.embedding.model_name == "Qwen/Qwen3-Embedding-0.6B"
     assert cfg.embedding.dim == 1024
-    assert cfg.embedding.batch_size == "auto"
+    assert cfg.embedding.batch_size in (16, 64)  # "auto" 在 validator 中已解析为具体数字
     assert cfg.rerank.enabled is False
     assert cfg.rerank.model_name == "Qwen/Qwen3-Reranker-0.6B"
     assert cfg.rerank.top_k_candidates == 40

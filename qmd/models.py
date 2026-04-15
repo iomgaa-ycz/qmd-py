@@ -116,11 +116,17 @@ class QmdClient(Protocol):
         ...
 
 
-def connect(db_path: str | Path | None = None) -> QmdClient:
+def connect(
+    db_path: str | Path | None = None,
+    config_overrides: dict | None = None,
+) -> QmdClient:
     """工厂函数：创建一个 SqliteQmdClient 实例。
 
     db_path 解析顺序：参数 > 环境变量 QMD_DB_PATH > ~/.qmd/db.sqlite。
     首次连接自动创建父目录 + schema。
+
+    :param db_path: SQLite 文件路径。
+    :param config_overrides: 覆盖 {db_path 同目录}/qmd.yaml 的字段（测试用）。
     """
     import os
 
@@ -129,4 +135,4 @@ def connect(db_path: str | Path | None = None) -> QmdClient:
     if db_path is None:
         env = os.environ.get("QMD_DB_PATH")
         db_path = Path(env) if env else Path.home() / ".qmd" / "db.sqlite"
-    return SqliteQmdClient(Path(db_path))
+    return SqliteQmdClient(Path(db_path), config_overrides=config_overrides)
