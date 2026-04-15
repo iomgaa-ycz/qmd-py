@@ -46,3 +46,14 @@ reference/
 e2e_data/
 
 .claude/settings.json
+
+# 覆盖率 & 测试产物
+.coverage
+htmlcov/
+
+# 临时报告
+audit_report.md
+CHANGELOG.md
+
+# e2e 临时脚本
+e2e_*.py
