@@ -101,3 +101,15 @@ def test_qmd_client_protocol_instance():
     client = connect()
     assert isinstance(client, QmdClient)
     client.close()
+
+
+def test_guide_excerpt_indexing_and_search(qmd_client, guide_excerpt_markdown):
+    """用真实 fixture 跑一遍 add + search。"""
+    col = qmd_client.collection("guide")
+    col.add_document("guide", guide_excerpt_markdown, {"source": "fixture"})
+    results = col.hybrid_search("向量检索", top_k=3)
+    assert len(results) >= 1
+    # char 索引应精确定位
+    for r in results:
+        extracted = guide_excerpt_markdown[r.chunk_ref.char_start : r.chunk_ref.char_end + 1]
+        assert extracted == r.text
