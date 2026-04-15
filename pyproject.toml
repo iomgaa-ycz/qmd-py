@@ -64,6 +64,9 @@ qmd = "qmd.cli.main:main"
 include = ["qmd*"]
 exclude = ["reference*", "tests*"]
 
+[project.entry-points.pytest11]
+qmd_contract = "qmd.testing.contract"
+
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
 testpaths = ["tests"]
