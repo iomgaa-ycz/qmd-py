@@ -290,13 +290,17 @@ class SqliteCollection:
         self,
         query: str,
         top_k: int = 5,
-        rerank: bool = False,  # M1 no-op
+        rerank: bool = False,
         filters: dict[str, Any] | None = None,
     ) -> list[SearchResult]:
-        """混合检索（BM25 + 向量 + RRF）。rerank 参数在 M1 中为 no-op。"""
+        """混合检索（BM25 + 向量 + RRF），rerank=True 时接入 Reranker 重排序。"""
         if not query.strip() or top_k <= 0:
             return []
         query_vec = self._embedder.embed([query])[0]
+
+        # rerank=True 时先拿 top_k_candidates 个候选，再重排取 top_k
+        rrf_limit = self.config.rerank.top_k_candidates if rerank else top_k
+
         with self._lock:
             filter_sql, filter_params = self._build_filter_clause(filters)
 
@@ -326,7 +330,7 @@ class SqliteCollection:
             ).fetchall()
             vec_ids = [r[0] for r in vec_rows]
 
-            fused = rrf_fuse([bm25_ids, vec_ids], k=self.config.retrieval.rrf_k)[:top_k]
+            fused = rrf_fuse([bm25_ids, vec_ids], k=self.config.retrieval.rrf_k)[:rrf_limit]
             if not fused:
                 return []
 
@@ -342,24 +346,41 @@ class SqliteCollection:
                 tuple(rowid for rowid, _ in fused),
             ).fetchall()
 
-            results: list[SearchResult] = []
-            for rowid, doc_id, chunk_idx, text, cs, ce, meta_json in detail_rows:
-                results.append(
-                    SearchResult(
-                        chunk_ref=ChunkRef(
-                            document_id=doc_id, chunk_index=chunk_idx,
-                            char_start=cs, char_end=ce,
-                        ),
-                        text=text,
-                        score=rowid_to_score[rowid],
-                        bm25_score=None,
-                        vector_score=None,
-                        rerank_score=None,
-                        metadata=json.loads(meta_json),
-                    )
+        # 按 RRF 顺序重建 candidates（rowid 顺序即 RRF 排名顺序）
+        rowid_to_detail: dict[int, tuple] = {
+            row[0]: row for row in detail_rows
+        }
+        candidates: list[SearchResult] = []
+        for rowid, rrf_score in fused:
+            if rowid not in rowid_to_detail:
+                continue
+            _, doc_id, chunk_idx, text, cs, ce, meta_json = rowid_to_detail[rowid]
+            candidates.append(
+                SearchResult(
+                    chunk_ref=ChunkRef(
+                        document_id=doc_id, chunk_index=chunk_idx,
+                        char_start=cs, char_end=ce,
+                    ),
+                    text=text,
+                    score=rrf_score,
+                    bm25_score=None,
+                    vector_score=None,
+                    rerank_score=None,
+                    metadata=json.loads(meta_json),
                 )
-            results.sort(key=lambda r: -r.score)
-            return results
+            )
+
+        if rerank:
+            from qmd.core.rerank import Reranker
+            scores = Reranker().score(query, [c.text for c in candidates])
+            for c, s in zip(candidates, scores):
+                c.rerank_score = s
+            candidates.sort(key=lambda c: c.rerank_score, reverse=True)  # type: ignore[arg-type]
+        else:
+            for c in candidates:
+                c.rerank_score = None
+
+        return candidates[:top_k]
 
     def _build_filter_clause(self, filters: dict[str, Any] | None) -> tuple[str, list[Any]]:
         """把 filters dict 转成 WHERE 片段。MVP 仅支持精确相等。"""

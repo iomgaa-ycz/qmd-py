@@ -78,12 +78,31 @@ def test_hybrid_search_returns_results(col):
         assert a.score >= b.score
 
 
-def test_hybrid_search_rerank_is_noop_in_m1(col):
+def test_hybrid_search_rerank_false_score_is_none(col):
+    """rerank=False 时 rerank_score 应为 None。"""
     col.add_document("d1", "hello world")
-    results_a = col.hybrid_search("hello", rerank=False)
-    results_b = col.hybrid_search("hello", rerank=True)
-    assert [r.chunk_ref.document_id for r in results_a] == [r.chunk_ref.document_id for r in results_b]
-    assert all(r.rerank_score is None for r in results_b)
+    results = col.hybrid_search("hello", rerank=False)
+    assert all(r.rerank_score is None for r in results)
+
+
+def test_hybrid_search_rerank_true_calls_reranker(col):
+    """rerank=True 时 Reranker.score 被调用，rerank_score 非 None。"""
+    from unittest.mock import patch
+
+    col.add_document("d1", "hello world")
+    col.add_document("d2", "goodbye world")
+
+    # mock Reranker.score：根据 docs 长度返回等长 scores，避免下载模型
+    def fake_score(self, query, docs):
+        return [0.9 - i * 0.1 for i in range(len(docs))]
+
+    with patch("qmd.core.rerank.Reranker.score", fake_score) as mock_score:
+        results = col.hybrid_search("hello", top_k=2, rerank=True)
+
+    assert all(r.rerank_score is not None for r in results)
+    # 按 rerank_score 降序
+    if len(results) >= 2:
+        assert results[0].rerank_score >= results[1].rerank_score
 
 
 def test_char_indices_match_original(col):
