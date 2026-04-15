@@ -1,8 +1,8 @@
 """FakeQmdClient：纯内存实现，供下游单测和 M0 CLI 使用。
 
 实现约束：
-- 不依赖 SQLite / sqlite-vec / GGUF
-- embedding 用真实小模型（all-MiniLM-L6-v2，~80MB，懒加载）
+- 不依赖 SQLite / sqlite-vec
+- embedding 复用 qmd.core.embedding.Embedder 单例（Qwen3-Embedding-0.6B，1024 维）
 - BM25 用 rank_bm25（纯 Python）
 - char_start/char_end 精确指向原始 markdown 的字符位置
 """
@@ -16,9 +16,10 @@ import numpy as np
 from loguru import logger
 from rank_bm25 import BM25Okapi
 
+from qmd.core.embedding import Embedder
 from qmd.models import ChunkRef, CollectionInfo, SearchResult
 
-_EMBEDDING_DIM = 384  # all-MiniLM-L6-v2
+_EMBEDDING_DIM = 1024  # Qwen3-Embedding-0.6B
 _RRF_K = 60
 
 
@@ -66,14 +67,14 @@ def _tokenize(text: str) -> list[str]:
 class FakeCollection:
     """Fake 的单 collection 实现，满足 qmd.models.Collection Protocol。"""
 
-    def __init__(self, name: str, embedder_holder: _EmbedderHolder) -> None:
+    def __init__(self, name: str, embedder: Embedder) -> None:
         self.name = name
         self._docs: dict[str, _DocRecord] = {}
         self._chunks: list[_ChunkRecord] = []
         self._lock = threading.Lock()
         self._bm25: BM25Okapi | None = None
         self._bm25_dirty = True
-        self._embedder_holder = embedder_holder
+        self._embedder = embedder
 
     def add_document(
         self,
@@ -205,9 +206,8 @@ class FakeCollection:
         missing = [i for i in indices if self._chunks[i].embedding is None]
         if not missing:
             return
-        embedder = self._embedder_holder.get()
         texts = [self._chunks[i].text for i in missing]
-        vectors = embedder.encode(texts, normalize_embeddings=True)
+        vectors = self._embedder.embed(texts)
         for i, vec in zip(missing, vectors, strict=True):
             self._chunks[i].embedding = np.asarray(vec, dtype=np.float32)
 
@@ -229,9 +229,8 @@ class FakeCollection:
     def _vector_rank(
         self, query: str, candidate_indices: list[int]
     ) -> list[tuple[int, float]]:
-        embedder = self._embedder_holder.get()
         q_vec = np.asarray(
-            embedder.encode([query], normalize_embeddings=True)[0], dtype=np.float32
+            self._embedder.embed([query])[0], dtype=np.float32
         )
         pairs: list[tuple[int, float]] = []
         for i in candidate_indices:
@@ -261,35 +260,18 @@ class FakeCollection:
         return out
 
 
-class _EmbedderHolder:
-    """共享的 SentenceTransformer 懒加载持有者。"""
-
-    def __init__(self) -> None:
-        self._embedder = None
-        self._lock = threading.Lock()
-
-    def get(self):
-        if self._embedder is None:
-            with self._lock:
-                if self._embedder is None:
-                    from sentence_transformers import SentenceTransformer
-                    logger.info("加载 all-MiniLM-L6-v2（首次）")
-                    self._embedder = SentenceTransformer("all-MiniLM-L6-v2")
-        return self._embedder
-
-
 class FakeQmdClient:
     """Fake QmdClient 实现。纯内存，进程内线程安全。"""
 
     def __init__(self) -> None:
         self._collections: dict[str, FakeCollection] = {}
         self._lock = threading.Lock()
-        self._embedder_holder = _EmbedderHolder()
+        self._embedder = Embedder()
 
     def collection(self, name: str) -> FakeCollection:
         with self._lock:
             if name not in self._collections:
-                self._collections[name] = FakeCollection(name, self._embedder_holder)
+                self._collections[name] = FakeCollection(name, self._embedder)
             return self._collections[name]
 
     def list_collections(self) -> list[CollectionInfo]:

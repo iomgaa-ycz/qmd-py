@@ -23,13 +23,13 @@ def test_add_search_recall():
     client.close()
 
 
-def test_embedding_dim_is_384():
-    """Fake 当前使用 all-MiniLM-L6-v2，输出维度 384（Task 8 会升级到 1024）。"""
+def test_embedding_dim_is_1024():
+    """Fake 复用 Qwen3-Embedding-0.6B 单例，输出维度 1024。"""
     client = FakeQmdClient()
     col = client.collection("c")
     col.add_document("d", "some text here.\n\nmore text.", {})
     info = col.info()
-    assert info.embedding_dim == 384
+    assert info.embedding_dim == 1024
     assert info.document_count == 1
     assert info.chunk_count == 2  # 按 \n\n 切成 2 段
     client.close()
