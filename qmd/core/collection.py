@@ -91,6 +91,113 @@ class SqliteCollection:
                 self._conn.rollback()
                 raise
 
+    def add_documents(self, docs: list[dict]) -> None:
+        """批量新增或更新文档（原子事务）。
+
+        fail-fast 全检 → 批内去重（后写覆盖）→ BEGIN 事务 →
+        每个文档 upsert + 删旧 chunks + 分块 → 单次大 batch embedding →
+        executemany 插入 chunks/fts/vec → COMMIT 或 ROLLBACK。
+        """
+        if not docs:
+            return
+
+        # fail-fast 全检（在加锁前执行，避免持锁做无谓校验）
+        for i, d in enumerate(docs):
+            if not isinstance(d, dict):
+                raise ValueError(f"docs[{i}] 必须是 dict，实际是 {type(d).__name__}")
+            for key, expected_type in (("document_id", str), ("markdown", str), ("metadata", dict)):
+                if key not in d:
+                    raise ValueError(f"docs[{i}] 缺少字段 '{key}'")
+                if not isinstance(d[key], expected_type):
+                    raise ValueError(
+                        f"docs[{i}]['{key}'] 类型错: 期望 {expected_type.__name__}, "
+                        f"实际 {type(d[key]).__name__}"
+                    )
+
+        # 批内同 id 去重：后写覆盖前写
+        deduped: dict[str, dict] = {}
+        for d in docs:
+            deduped[d["document_id"]] = d
+        ordered = list(deduped.values())
+
+        now = int(time.time() * 1000)
+
+        # 所有文档先分块，收集所有 chunk 文本，做单次大 batch embedding
+        per_doc_chunks = []
+        for d in ordered:
+            chunks = chunk_document(
+                d["markdown"],
+                size=self.config.chunking.size,
+                overlap=self.config.chunking.overlap,
+            )
+            per_doc_chunks.append(chunks)
+
+        all_texts = [c.text for chunks in per_doc_chunks for c in chunks]
+        if all_texts:
+            all_embeddings = self._embedder.embed(all_texts)
+        else:
+            all_embeddings = []
+
+        with self._lock:
+            cur = self._conn.cursor()
+            try:
+                cur.execute("BEGIN")
+
+                emb_offset = 0
+                for d, chunks in zip(ordered, per_doc_chunks):
+                    document_id = d["document_id"]
+                    markdown = d["markdown"]
+                    meta_json = json.dumps(d["metadata"], ensure_ascii=False)
+
+                    # upsert document 行
+                    cur.execute(
+                        """
+                        INSERT INTO documents(collection, id, markdown, metadata, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(collection, id) DO UPDATE SET
+                            markdown=excluded.markdown,
+                            metadata=excluded.metadata,
+                            updated_at=excluded.updated_at
+                        """,
+                        (self.name, document_id, markdown, meta_json, now, now),
+                    )
+
+                    # 删旧 chunks（fts/vec 影子一并删）
+                    self._delete_chunks_locked(cur, document_id)
+
+                    # 插入新 chunks：逐行 INSERT 以获取 lastrowid，然后 executemany fts+vec
+                    fts_rows: list[tuple] = []
+                    vec_rows: list[tuple] = []
+                    n = len(chunks)
+                    embeddings = all_embeddings[emb_offset : emb_offset + n]
+                    emb_offset += n
+
+                    for idx, (chunk, emb) in enumerate(zip(chunks, embeddings)):
+                        cur.execute(
+                            """
+                            INSERT INTO chunks(collection, document_id, chunk_index, text, char_start, char_end)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                            (self.name, document_id, idx, chunk.text, chunk.char_start, chunk.char_end),
+                        )
+                        rowid = cur.lastrowid
+                        fts_rows.append((rowid, chunk.text))
+                        vec_rows.append((rowid, _vec_to_sqlite_literal(emb)))
+
+                    if fts_rows:
+                        cur.executemany(
+                            "INSERT INTO chunks_fts(rowid, text) VALUES (?, ?)", fts_rows
+                        )
+                    if vec_rows:
+                        cur.executemany(
+                            "INSERT INTO chunks_vec(rowid, embedding) VALUES (?, ?)", vec_rows
+                        )
+
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+
     def delete_document(self, document_id: str) -> None:
         """删除指定文档及其所有 chunks。不存在时静默 no-op。"""
         with self._lock:
