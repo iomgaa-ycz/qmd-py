@@ -93,7 +93,7 @@ class Collection(Protocol):
     def add_documents(self, docs: list[dict]) -> None:
         """批量新增或更新文档。
 
-        :param docs: 每个 dict 必含 'document_id: str', 'markdown: str', 'metadata: dict'。
+        :param docs: 每个 dict 必含 'document_id: str', 'markdown: str'（必填）；'metadata: dict'（可选，缺省为 {}）。
         :raises ValueError: 任一 dict 缺字段或字段类型错（fail-fast 全检，入库前就抛）。
 
         契约:

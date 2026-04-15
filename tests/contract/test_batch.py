@@ -59,6 +59,27 @@ def test_batch_wrong_type_raises(qmd_client):
     assert col.list_documents() == []
 
 
+def test_batch_metadata_optional(qmd_client):
+    """metadata 字段可省略，缺省等价 {}（与 add_document 对齐）。"""
+    col = qmd_client.collection("c")
+    col.add_documents([
+        {"document_id": "d1", "markdown": "text one"},  # 无 metadata
+        {"document_id": "d2", "markdown": "text two", "metadata": {"k": "v"}},
+    ])
+    assert col.get_document("d1")["metadata"] == {}
+    assert col.get_document("d2")["metadata"] == {"k": "v"}
+
+
+def test_batch_metadata_wrong_type_raises(qmd_client):
+    """metadata 若存在但不是 dict → ValueError。"""
+    col = qmd_client.collection("c")
+    with pytest.raises(ValueError):
+        col.add_documents([
+            {"document_id": "d1", "markdown": "ok", "metadata": "not a dict"},
+        ])
+    assert col.list_documents() == []
+
+
 def test_batch_faster_than_loop_sqlite(tmp_path):
     """仅 sqlite 后端：20 文档批量 vs 循环单加，批量 ≥1.5x 快。
 

@@ -147,18 +147,23 @@ class FakeCollection:
         for i, d in enumerate(docs):
             if not isinstance(d, dict):
                 raise ValueError(f"docs[{i}] 必须是 dict，实际是 {type(d).__name__}")
-            for key, expected_type in (
-                ("document_id", str),
-                ("markdown", str),
-                ("metadata", dict),
-            ):
+            # 必填字段
+            for key in ("document_id", "markdown"):
                 if key not in d:
                     raise ValueError(f"docs[{i}] 缺少字段 '{key}'")
-                if not isinstance(d[key], expected_type):
-                    raise ValueError(
-                        f"docs[{i}]['{key}'] 类型错: 期望 {expected_type.__name__}, "
-                        f"实际 {type(d[key]).__name__}"
-                    )
+            if not isinstance(d["document_id"], str):
+                raise ValueError(
+                    f"docs[{i}]['document_id'] 类型错: 期望 str, 实际 {type(d['document_id']).__name__}"
+                )
+            if not isinstance(d["markdown"], str):
+                raise ValueError(
+                    f"docs[{i}]['markdown'] 类型错: 期望 str, 实际 {type(d['markdown']).__name__}"
+                )
+            # 可选字段
+            if "metadata" in d and not isinstance(d["metadata"], dict):
+                raise ValueError(
+                    f"docs[{i}]['metadata'] 类型错: 期望 dict, 实际 {type(d['metadata']).__name__}"
+                )
 
         with self._lock:
             # deepcopy snapshot 用于失败回滚（_lock 为 RLock，可重入）
@@ -167,7 +172,7 @@ class FakeCollection:
             snapshot_dirty = self._bm25_dirty
             try:
                 for d in docs:
-                    self.add_document(d["document_id"], d["markdown"], d["metadata"])
+                    self.add_document(d["document_id"], d["markdown"], d.get("metadata") or {})
             except Exception:
                 self._docs = snapshot_docs
                 self._chunks = snapshot_chunks

@@ -94,9 +94,9 @@ class SqliteCollection:
     def add_documents(self, docs: list[dict]) -> None:
         """批量新增或更新文档（原子事务）。
 
-        fail-fast 全检 → 批内去重（后写覆盖）→ BEGIN 事务 →
-        每个文档 upsert + 删旧 chunks + 分块 → 单次大 batch embedding →
-        executemany 插入 chunks/fts/vec → COMMIT 或 ROLLBACK。
+        fail-fast 全检 → 批内去重（后写覆盖）→ 锁外分块 + 单次大 batch embedding
+        → 加锁 → BEGIN → 每个文档 upsert + 删旧 chunks + executemany 插入 chunks/fts/vec
+        → COMMIT 或 ROLLBACK。
         """
         if not docs:
             return
@@ -105,14 +105,23 @@ class SqliteCollection:
         for i, d in enumerate(docs):
             if not isinstance(d, dict):
                 raise ValueError(f"docs[{i}] 必须是 dict，实际是 {type(d).__name__}")
-            for key, expected_type in (("document_id", str), ("markdown", str), ("metadata", dict)):
+            # 必填字段
+            for key in ("document_id", "markdown"):
                 if key not in d:
                     raise ValueError(f"docs[{i}] 缺少字段 '{key}'")
-                if not isinstance(d[key], expected_type):
-                    raise ValueError(
-                        f"docs[{i}]['{key}'] 类型错: 期望 {expected_type.__name__}, "
-                        f"实际 {type(d[key]).__name__}"
-                    )
+            if not isinstance(d["document_id"], str):
+                raise ValueError(
+                    f"docs[{i}]['document_id'] 类型错: 期望 str, 实际 {type(d['document_id']).__name__}"
+                )
+            if not isinstance(d["markdown"], str):
+                raise ValueError(
+                    f"docs[{i}]['markdown'] 类型错: 期望 str, 实际 {type(d['markdown']).__name__}"
+                )
+            # 可选字段
+            if "metadata" in d and not isinstance(d["metadata"], dict):
+                raise ValueError(
+                    f"docs[{i}]['metadata'] 类型错: 期望 dict, 实际 {type(d['metadata']).__name__}"
+                )
 
         # 批内同 id 去重：后写覆盖前写
         deduped: dict[str, dict] = {}
@@ -147,7 +156,7 @@ class SqliteCollection:
                 for d, chunks in zip(ordered, per_doc_chunks):
                     document_id = d["document_id"]
                     markdown = d["markdown"]
-                    meta_json = json.dumps(d["metadata"], ensure_ascii=False)
+                    meta_json = json.dumps(d.get("metadata") or {}, ensure_ascii=False)
 
                     # upsert document 行
                     cur.execute(
