@@ -58,7 +58,7 @@ Repository = "https://github.com/chengzhag/qmd-py"
 Issues = "https://github.com/chengzhag/qmd-py/issues"
 
 [project.scripts]
-qmd = "qmd.cli.main:main"
+qmd = "qmd.cli.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["qmd*"]

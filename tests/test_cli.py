@@ -10,6 +10,15 @@ from unittest import mock
 
 import pytest
 
+pytestmark = pytest.mark.skip(
+    reason="legacy CLI (qmd.cli.main), removed in M3. 新 CLI 测试在 tests/contract/test_cli_shape.py"
+)
+
+pytest.skip(
+    "legacy CLI (qmd.cli.main) removed in M3. 新 CLI 测试在 tests/contract/test_cli_shape.py",
+    allow_module_level=True,
+)
+
 from qmd.cli.main import create_parser, main
 
 
