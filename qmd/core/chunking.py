@@ -159,7 +159,7 @@ def chunk_document(text: str, size: int = 512, overlap: int = 64) -> list[Chunk]
         return []
 
     size_chars = size * _CHARS_PER_TOKEN
-    step_chars = max((size - overlap) * _CHARS_PER_TOKEN, 1)
+    _fallback_step_chars = max((size - overlap) * _CHARS_PER_TOKEN, 1)
     window_chars = size_chars
 
     total = len(text)
@@ -200,7 +200,8 @@ def chunk_document(text: str, size: int = 512, overlap: int = 64) -> list[Chunk]
         chunks.append(Chunk(text=text[cursor:cutoff], char_start=cursor, char_end=cutoff))
         next_cursor = cutoff - overlap * _CHARS_PER_TOKEN
         if next_cursor <= cursor:
-            next_cursor = cursor + step_chars
+            next_cursor = cursor + _fallback_step_chars
+        assert next_cursor > cursor, "liveness: cursor must advance"
         cursor = min(next_cursor, total)
     return chunks
 

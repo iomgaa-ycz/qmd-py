@@ -43,16 +43,21 @@ def test_code_fence_not_split_in_middle():
     for c in chunks:
         assert not (fence_open < c.char_start < fence_close), \
             f"chunk start {c.char_start} inside fence [{fence_open},{fence_close}]"
+        assert not (fence_open < c.char_end < fence_close), \
+            f"chunk end {c.char_end} inside fence [{fence_open},{fence_close}]"
 
 
 def test_heading_boundary_preferred():
-    prefix = "a " * 400
-    text = prefix + "\n## New Section\n" + "b " * 400
+    # size=512 tokens ≈ 1024 chars；构造 1600+ 字符文本保证多 chunk
+    prefix = "a " * 600
+    text = prefix + "\n## New Section\n" + "b " * 600
     chunks = chunk_document(text, size=512, overlap=64)
-    if len(chunks) >= 2:
-        boundary = chunks[0].char_end
-        section_idx = text.index("## New Section")
-        assert abs(boundary - section_idx) <= 50
+    assert len(chunks) >= 2, f"expected multi-chunk, got {len(chunks)}"
+    boundary = chunks[0].char_end
+    section_idx = text.index("## New Section")
+    # 第一 chunk 的终点应落在 H2 标题附近（±100 字符窗口内）
+    assert abs(boundary - section_idx) <= 100, \
+        f"boundary={boundary} section={section_idx}, diff={boundary - section_idx}"
 
 
 def test_chunk_is_frozen_dataclass():
