@@ -71,7 +71,7 @@ def open_connection(db_path: str | Path) -> sqlite3.Connection:
     _check_sqlite_version()
     p = Path(db_path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(p))
+    conn = sqlite3.connect(str(p), isolation_level=None)  # autocommit：事务由调用方（如 collection.py）显式 BEGIN/COMMIT
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
