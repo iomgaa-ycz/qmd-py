@@ -55,3 +55,15 @@ def test_collection_uses_config_chunk_size(tmp_path: Path):
     # size=100 切得更碎，至少 3 段
     assert info.chunk_count >= 3
     client.close()
+
+
+def test_connect_auto_batch_size_from_yaml_resolves_to_int(tmp_path: Path):
+    """yaml 中 batch_size: auto → config 中解析成 int（16 或 64）。"""
+    (tmp_path / "qmd.yaml").write_text(
+        "embedding:\n  batch_size: auto\n",
+        encoding="utf-8",
+    )
+    client = connect(tmp_path / "db.sqlite")
+    assert isinstance(client.config.embedding.batch_size, int)
+    assert client.config.embedding.batch_size in (16, 64)
+    client.close()

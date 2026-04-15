@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-import torch
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 
@@ -20,14 +19,14 @@ class ConfigError(Exception):
 
 
 class ChunkingConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True)
     size: int = 512
     overlap: int = 64
     strategy: Literal["semantic"] = "semantic"
 
 
 class EmbeddingConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True)
     backend: Literal["sentence_tf"] = "sentence_tf"
     model_name: str = "Qwen/Qwen3-Embedding-0.6B"
     dim: int = 1024
@@ -38,12 +37,13 @@ class EmbeddingConfig(BaseModel):
     def _resolve_auto(cls, v: object) -> int:
         """将 'auto' 解析为 GPU=64/CPU=16。"""
         if v == "auto":
+            import torch  # lazy: only when resolving 'auto'
             return 64 if torch.cuda.is_available() else 16
         return int(v)  # type: ignore[arg-type]
 
 
 class RerankConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True)
     enabled: bool = False
     backend: Literal["sentence_tf"] = "sentence_tf"
     model_name: str = "Qwen/Qwen3-Reranker-0.6B"
@@ -51,14 +51,14 @@ class RerankConfig(BaseModel):
 
 
 class RetrievalConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True)
     rrf_k: int = 60
     bm25_top_k: int = 20
     vector_top_k: int = 20
 
 
 class QmdConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True)
     chunking: ChunkingConfig = ChunkingConfig()
     embedding: EmbeddingConfig = EmbeddingConfig()
     rerank: RerankConfig = RerankConfig()
