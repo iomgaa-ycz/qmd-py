@@ -76,9 +76,21 @@ class QmdConfig(BaseModel):
             try:
                 with yaml_path.open("r", encoding="utf-8") as f:
                     loaded = yaml.safe_load(f)
-                yaml_data = loaded if isinstance(loaded, dict) else {}
+                if loaded is None:
+                    yaml_data = {}
+                elif isinstance(loaded, dict):
+                    yaml_data = loaded
+                else:
+                    raise ConfigError(
+                        f"qmd.yaml 顶层结构必须是 dict，实际为 {type(loaded).__name__}: {yaml_path}"
+                    )
             except yaml.YAMLError as e:
                 raise ConfigError(f"qmd.yaml 语法错误 ({yaml_path}): {e}") from e
+
+        if config_overrides:
+            none_sections = [k for k, v in config_overrides.items() if v is None]
+            if none_sections:
+                raise ConfigError(f"config_overrides 中字段不能为 None: {none_sections}")
 
         merged = _deep_merge(yaml_data, config_overrides or {})
 

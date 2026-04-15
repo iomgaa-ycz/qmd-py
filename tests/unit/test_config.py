@@ -24,6 +24,7 @@ def test_defaults_when_no_yaml(tmp_path: Path):
 
 
 def test_load_from_yaml(tmp_path: Path):
+    """{db_path 同目录}/qmd.yaml 被自动发现。"""
     yaml_path = tmp_path / "qmd.yaml"
     yaml_path.write_text(
         yaml.safe_dump({"chunking": {"size": 256, "overlap": 32}}),
@@ -36,6 +37,7 @@ def test_load_from_yaml(tmp_path: Path):
 
 
 def test_overrides_beats_yaml(tmp_path: Path):
+    """config_overrides 优先级高于 yaml。"""
     yaml_path = tmp_path / "qmd.yaml"
     yaml_path.write_text(yaml.safe_dump({"rerank": {"enabled": False}}), encoding="utf-8")
     cfg = QmdConfig.load(
@@ -71,3 +73,29 @@ def test_unknown_yaml_field_raises(tmp_path: Path):
     )
     with pytest.raises(ConfigError):
         QmdConfig.load(db_path=tmp_path / "db.sqlite")
+
+
+def test_list_top_level_yaml_raises(tmp_path: Path):
+    """顶层结构非 dict（如 list）→ ConfigError，不静默走默认。"""
+    yaml_path = tmp_path / "qmd.yaml"
+    yaml_path.write_text("- item1\n- item2\n", encoding="utf-8")
+    with pytest.raises(ConfigError) as exc_info:
+        QmdConfig.load(db_path=tmp_path / "db.sqlite")
+    assert "dict" in str(exc_info.value).lower() or "list" in str(exc_info.value).lower()
+
+
+def test_empty_yaml_uses_defaults(tmp_path: Path):
+    """空 yaml 文件（safe_load 返回 None）→ 走默认，不抛错。"""
+    yaml_path = tmp_path / "qmd.yaml"
+    yaml_path.write_text("", encoding="utf-8")
+    cfg = QmdConfig.load(db_path=tmp_path / "db.sqlite")
+    assert cfg.chunking.size == 512
+
+
+def test_overrides_none_section_raises(tmp_path: Path):
+    """config_overrides 中某 section 为 None → ConfigError（防止调用方错误）。"""
+    with pytest.raises(ConfigError):
+        QmdConfig.load(
+            db_path=tmp_path / "db.sqlite",
+            config_overrides={"chunking": None},
+        )
