@@ -121,7 +121,6 @@ qmd/
 │   └── rerank.py          ← Qwen3-Reranker（可选）
 ├── llm/                   ← embedding / rerank 后端
 │   ├── base.py
-│   ├── llama_cpp.py
 │   └── sentence_tf.py
 ├── testing/
 │   ├── fakes.py           ← FakeQmdClient / FakeCollection（内存版，用于 Scrivai 单测）
@@ -136,12 +135,12 @@ qmd/
 
 ### 4.1 关键实现决策
 
-- **Chunking**：语义边界分块（复用现有 `core/chunking.py` 算法），chunk 大小默认 512 tokens、overlap 64
-- **Embedding**：embeddinggemma-300M GGUF（默认）；Scrivai 通过 `qmd.yaml` 配置可切换
-- **BM25**：SQLite FTS5 内置
+- **Chunking**：语义边界分块（见 `qmd/core/chunking.py`），chunk 大小默认 512 tokens、overlap 64
+- **Embedding**：Qwen/Qwen3-Embedding-0.6B（sentence-transformers，1024-dim，默认）；可通过 `qmd.yaml` 切换 model_name
+- **BM25**：SQLite FTS5 内置（trigram tokenizer，支持中文）
 - **融合**：Reciprocal Rank Fusion（RRF），k=60
-- **Rerank**：Qwen3-Reranker-0.6B（可选开关，`hybrid_search(rerank=True)`）
-- **Query Expansion**：MVP **不开**（复杂度 vs 收益不值，移到 M2 评估）
+- **Rerank**：Qwen/Qwen3-Reranker-0.6B（transformers HF checkpoint，可选开关，`hybrid_search(rerank=True)`；配置见 `qmd.yaml` `rerank.enabled`）
+- **Query Expansion**：延后到 M3（见 `docs/plans/m3-backlog.md`）
 
 ## 4.2 CLI 实现要点
 
@@ -220,21 +219,23 @@ Scrivai 的 Chain（Extract/Audit/Generate）**也会**临时创建 collection�
 ## 9. 配置
 
 ```yaml
-# qmd.yaml（业务层传给 qmd.connect 的 db_path 目录里）
+# qmd.yaml（放在 db_path 同目录；缺失即走默认值）
 chunking:
   size: 512
   overlap: 64
   strategy: "semantic"
 
 embedding:
-  backend: "llama_cpp"
-  model_path: "./models/embeddinggemma-300M.gguf"
-  dim: 768
+  backend: "sentence_tf"
+  model_name: "Qwen/Qwen3-Embedding-0.6B"
+  dim: 1024
+  batch_size: "auto"     # auto → GPU=64, CPU=16
 
 rerank:
-  enabled: true
-  backend: "llama_cpp"
-  model_path: "./models/qwen3-reranker-0.6B.gguf"
+  enabled: false
+  backend: "sentence_tf"
+  model_name: "Qwen/Qwen3-Reranker-0.6B"
+  top_k_candidates: 40
 
 retrieval:
   rrf_k: 60

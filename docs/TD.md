@@ -127,12 +127,11 @@
 - **优先级**: P0
 - **估时**: 2d
 
-### T1.3 Embedding 后端（llama_cpp + sentence_tf）
+### T1.3 Embedding 后端（sentence_tf）
 - **DoD**:
   - `qmd/llm/base.py` 定义 `EmbeddingBackend` 接口
-  - llama_cpp 后端调用 embeddinggemma-300M GGUF
-  - sentence_tf 后端作为 fallback
-  - 自动 batch（默认 32）
+  - sentence_tf 后端调用 Qwen/Qwen3-Embedding-0.6B（HuggingFace checkpoint）
+  - 自动 batch（默认 32，GPU 自动提升）
 - **依赖**: T1.2
 - **优先级**: P0
 - **估时**: 1.5d

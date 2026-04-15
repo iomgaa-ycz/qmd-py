@@ -1,4 +1,4 @@
-"""Qwen3-Reranker-0.6B 封装（via transformers HF checkpoint，不走 GGUF）。
+"""Qwen3-Reranker-0.6B 封装（via transformers HF checkpoint）。
 
 - 类级单例：共享模型避免 GPU OOM（同 Embedder 策略）。
 - 懒加载：首次 score 时下载（~1.2GB）。

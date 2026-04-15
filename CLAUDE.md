@@ -12,7 +12,7 @@
 - **移植目标**: 
   - **功能对齐**: 实现与 qmd 相同的混合检索能力
   - **API 兼容**: 保持相似的 CLI 和 MCP 接口
-  - **模型一致**: 使用相同的 GGUF 模型（embeddinggemma-300M, Qwen3-Reranker, qmd-query-expansion）
+  - **模型一致**: 使用相同的检索模型（Qwen3-Embedding-0.6B, Qwen3-Reranker-0.6B）
   - **存储一致**: 使用相同的 SQLite + sqlite-vec 架构
 - **核心能力**: Markdown 文档的智能检索引擎
   - 智能语义边界分块 (Smart Chunking)
@@ -36,21 +36,13 @@
 | **测试框架** | pytest | 目标覆盖率 80% |
 | **日志** | loguru | 禁用 print() |
 
-### 2.2 LLM 后端 (分阶段)
+### 2.2 LLM 后端
 
-#### MVP 阶段（快速验证）
 | 任务 | 库 | 模型 | 说明 |
 |------|-----|------|------|
-| **Embedding** | sentence-transformers | all-MiniLM-L6-v2 | HuggingFace 生态，快速验证 |
-| **Reranker** | FlagEmbedding | bge-reranker-v2-m3 | 成熟的重排序模型 |
-| **Query Expansion** | llama-cpp-python | qmd-query-expansion-1.7B GGUF | 必须用 GGUF（与 qmd 一致） |
-
-#### 生产阶段（与 qmd 对齐）
-| 任务 | 库 | 模型 | 说明 |
-|------|-----|------|------|
-| **Embedding** | llama-cpp-python | embeddinggemma-300M-Q8_0.gguf | 与 qmd 完全一致 |
-| **Reranker** | llama-cpp-python (手动实现) | Qwen3-Reranker-0.6B-Q8_0.gguf | 需要自己解析 logprobs |
-| **Query Expansion** | llama-cpp-python | qmd-query-expansion-1.7B-q4_k_m.gguf | 与 MVP 一致 |
+| **Embedding** | sentence-transformers | Qwen/Qwen3-Embedding-0.6B | 1024-dim，HuggingFace checkpoint，类级单例 |
+| **Reranker** | transformers | Qwen/Qwen3-Reranker-0.6B | CausalLM yes/no 打分（`P(yes) = softmax([logit_yes, logit_no])[0]`），类级单例 |
+| **Query Expansion** | — | — | M2 决定延后到 M3 评估（见 `docs/plans/m3-backlog.md`） |
 
 ### 2.3 依赖映射表
 
@@ -58,7 +50,7 @@
 |------------------|-----------------|------|
 | better-sqlite3 | sqlite3 (内置) | SQLite 驱动 |
 | sqlite-vec | sqlite-vec (PyPI) | 向量扩展 |
-| node-llama-cpp | llama-cpp-python | GGUF 加载器 |
+| TS LLM 后端 | sentence-transformers / transformers | Embedding + Rerank 后端（HF 生态，无 C++ 编译） |
 | fast-glob | glob / pathlib | 文件匹配 |
 | yaml | PyYAML | YAML 解析 |
 | zod | pydantic | Schema 验证 |
@@ -94,8 +86,7 @@ qmd-py/
 │   ├── llm/                 # LLM 抽象层
 │   │   ├── __init__.py
 │   │   ├── base.py          # LLM 接口定义 (Protocol/ABC)
-│   │   ├── llama_cpp.py     # llama-cpp-python 实现
-│   │   ├── huggingface.py   # sentence-transformers 实现 (MVP 阶段)
+│   │   ├── sentence_tf.py   # sentence-transformers 实现（Embedding + Rerank）
 │   │   ├── models.py        # 模型管理 (下载、缓存、idle timeout)
 │   │   └── formatters.py    # Prompt 格式化 (nomic-style 等)
 │   │
@@ -129,7 +120,7 @@ qmd-py/
 │       └── sample_docs/
 │
 ├── scripts/                 # 工具脚本
-│   ├── download_models.py   # 预下载 GGUF 模型
+│   ├── download_models.py   # 预下载 HuggingFace 模型
 │   └── migrate_from_qmd.py  # 从 qmd 迁移索引数据
 │
 └── docs/                    # 文档
@@ -153,7 +144,7 @@ qmd-py/
 > **真实代码原则**
 > - **严禁使用 mock、stub、占位符、伪实现**（如随机数模拟 embedding、Jaccard 代替 reranker）
 > - MVP 不等于假代码——MVP 是功能精简但真实可用的实现
-> - 所有函数必须调用真实的底层 API（llama_cpp.Llama、sqlite-vec 等）
+> - 所有函数必须调用真实的底层 API（sentence-transformers、transformers、sqlite-vec 等）
 > - 如果某个功能暂时无法实现（如缺少模型文件），应抛出明确的 NotImplementedError，而非用 mock 伪装
 
 ### 4.2 代码风格
@@ -185,7 +176,7 @@ qmd-py/
   
   # 2. 第三方库
   import numpy as np
-  from llama_cpp import Llama
+  from sentence_transformers import SentenceTransformer
   
   # 3. 项目内部
   from qmd.core.db import open_database
@@ -221,7 +212,7 @@ qmd-py/
 
 - **禁止在被测代码中使用 mock**:
   - 被测试的源码（`qmd/` 下的代码）必须是真实实现
-  - 测试代码（`tests/` 下）可以使用 `unittest.mock` 来模拟外部依赖（如 GGUF 模型文件），但必须确保 mock 的行为与真实 API 一致
+  - 测试代码（`tests/` 下）可以使用 `unittest.mock` 来模拟外部依赖（如 HuggingFace 模型），但必须确保 mock 的行为与真实 API 一致
 
 ### 4.5 Git 规范
 
@@ -379,31 +370,15 @@ def update_document(path: str, new_content: str):
 
 ## 7. 与 qmd 的差异 (Differences from QMD)
 
-### 7.1 不可避免的差异
+### 7.1 技术栈差异
 
-| 功能 | qmd (TypeScript) | qmd-py (Python) | 影响 |
-|------|------------------|-----------------|------|
-| **GGUF 加载器** | node-llama-cpp | llama-cpp-python | ⚠️ Python 版功能较弱 |
-| **并行 Embedding** | 多 context 并行 | 单线程循环 (llama-cpp) / 批处理 (HF) | ⚠️ 性能下降 |
-| **Reranker API** | 内置 `rankAll()` | 需手动实现 (logprobs 解析) | ⚠️ 需自己编码 |
-| **Context 管理** | 独立 context 对象 | 较简单 | ⚠️ 抽象层较薄 |
-| **Idle Timeout** | 原生支持 | 需用 `threading.Timer` | ⚠️ 需自己实现 |
+实现上均走 torch + HuggingFace 生态（sentence-transformers / transformers），无 C++ 编译依赖。
 
-### 7.2 分阶段策略
+### 7.2 当前技术栈
 
-#### MVP 阶段（2 周内可用）
-- **Embedding**: `sentence-transformers` (all-MiniLM-L6-v2)
-- **Reranker**: `FlagEmbedding` (bge-reranker-v2-m3)
-- **Query Expansion**: `llama-cpp-python` (qmd-query-expansion GGUF)
-
-**优势**: 快速验证核心逻辑，HuggingFace 生态成熟
-
-#### 生产阶段（与 qmd 对齐）
-- **Embedding**: `llama-cpp-python` + embeddinggemma GGUF
-- **Reranker**: 手动实现 (logprobs 解析)
-- **Query Expansion**: 同 MVP
-
-**优势**: 与 qmd 结果完全一致，可直接对比质量
+- **Embedding**: sentence-transformers + Qwen/Qwen3-Embedding-0.6B
+- **Reranker**: transformers + Qwen/Qwen3-Reranker-0.6B (CausalLM yes/no 打分)
+- **优势**: 技术栈统一（都走 torch / HuggingFace），无 C++ 编译、无 logprobs 手工解析
 
 ### 7.3 包名差异
 

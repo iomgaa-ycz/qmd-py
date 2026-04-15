@@ -1,7 +1,7 @@
 """qmd.testing — 下游单测辅助。
 
 暴露 FakeQmdClient / FakeCollection，供下游（如 Scrivai）在单测中使用，
-避免加载真实 GGUF 或 SQLite。
+避免加载真实模型或 SQLite。
 """
 from __future__ import annotations
 
