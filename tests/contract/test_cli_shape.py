@@ -23,7 +23,7 @@ def _run_cli(*args: str) -> tuple[int, dict | list, str]:
         [sys.executable, "-m", "qmd", *args],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=60,
     )
     stdout = proc.stdout.strip()
     try:

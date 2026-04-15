@@ -23,22 +23,13 @@ classifiers = [
 ]
 dependencies = [
     "sqlite-vec",
-    "PyYAML",
     "pydantic",
     "loguru",
-    "watchdog",
+    "sentence-transformers",
+    "numpy",
 ]
 
 [project.optional-dependencies]
-mvp = [
-    "sentence-transformers",
-    "FlagEmbedding",
-    "llama-cpp-python",
-    "torch",
-]
-mcp = [
-    "mcp",
-]
 dev = [
     "pytest",
     "pytest-asyncio",
@@ -46,9 +37,7 @@ dev = [
 testing = [
     "pytest",
     "pytest-asyncio",
-    "sentence-transformers",
     "rank-bm25",
-    "numpy",
     "deepdiff",
 ]
 
