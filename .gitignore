@@ -57,3 +57,5 @@ CHANGELOG.md
 
 # e2e 临时脚本
 e2e_*.py
+
+tests/perf/.cache/
