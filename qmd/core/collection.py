@@ -23,8 +23,6 @@ CHUNK_OVERLAP_TOKENS = 64
 RRF_K = 60
 BM25_TOP_K = 20
 VECTOR_TOP_K = 20
-EMBEDDING_BATCH_SIZE = 32
-
 
 def _vec_to_sqlite_literal(vec: list[float]) -> str:
     """sqlite-vec 的 MATCH 接受 JSON array 字符串。"""
@@ -61,9 +59,7 @@ class SqliteCollection:
 
         embeddings: list[list[float]] = []
         if chunks:
-            embeddings = self._embedder.embed(
-                [c.text for c in chunks], batch_size=EMBEDDING_BATCH_SIZE
-            )
+            embeddings = self._embedder.embed([c.text for c in chunks])
 
         with self._lock:
             cur = self._conn.cursor()
