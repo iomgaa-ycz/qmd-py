@@ -71,7 +71,7 @@ class FakeCollection:
         self.name = name
         self._docs: dict[str, _DocRecord] = {}
         self._chunks: list[_ChunkRecord] = []
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._bm25: BM25Okapi | None = None
         self._bm25_dirty = True
         self._embedder = embedder
@@ -136,6 +136,42 @@ class FakeCollection:
     def list_documents(self) -> list[str]:
         with self._lock:
             return list(self._docs.keys())
+
+    def add_documents(self, docs: list[dict]) -> None:
+        """批量新增或更新文档（原子事务 + fail-fast 全检）。"""
+        if not docs:
+            return
+
+        # fail-fast 全检：入库前全部验证，任一失败即抛
+        for i, d in enumerate(docs):
+            if not isinstance(d, dict):
+                raise ValueError(f"docs[{i}] 必须是 dict，实际是 {type(d).__name__}")
+            for key, expected_type in (
+                ("document_id", str),
+                ("markdown", str),
+                ("metadata", dict),
+            ):
+                if key not in d:
+                    raise ValueError(f"docs[{i}] 缺少字段 '{key}'")
+                if not isinstance(d[key], expected_type):
+                    raise ValueError(
+                        f"docs[{i}]['{key}'] 类型错: 期望 {expected_type.__name__}, "
+                        f"实际 {type(d[key]).__name__}"
+                    )
+
+        import copy
+
+        with self._lock:
+            # deepcopy snapshot 用于失败回滚（_lock 为 RLock，可重入）
+            snapshot_docs = copy.deepcopy(self._docs)
+            snapshot_chunks = copy.deepcopy(self._chunks)
+            try:
+                for d in docs:
+                    self.add_document(d["document_id"], d["markdown"], d["metadata"])
+            except Exception:
+                self._docs = snapshot_docs
+                self._chunks = snapshot_chunks
+                raise
 
     def info(self) -> CollectionInfo:
         with self._lock:

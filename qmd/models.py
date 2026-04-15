@@ -90,6 +90,20 @@ class Collection(Protocol):
         """混合检索（BM25 + 向量 + RRF），返回按 score 降序的 top_k 条。"""
         ...
 
+    def add_documents(self, docs: list[dict]) -> None:
+        """批量新增或更新文档。
+
+        :param docs: 每个 dict 必含 'document_id: str', 'markdown: str', 'metadata: dict'。
+        :raises ValueError: 任一 dict 缺字段或字段类型错（fail-fast 全检，入库前就抛）。
+
+        契约:
+        - 原子事务：任一失败整批回滚
+        - upsert 语义：同 add_document；批内同 id 重复以最后一个为准
+        - 空 list 合法（no-op）
+        - 线程安全
+        """
+        ...
+
     def info(self) -> CollectionInfo:
         """返回本 collection 的元信息。"""
         ...
