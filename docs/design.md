@@ -1,6 +1,9 @@
 # qmd-py 设计文档
 
-**日期**: 2026-04-14
+> **版本**: v3（2026-04-15）
+> **v2→v3 变更**：pydantic/Protocol 定义集中在本项目 `qmd/models.py`（单一真相），从 `qmd/__init__.py` 公开导出；design.md 不再内嵌代码，仅引用源文件。
+
+**日期**: 2026-04-15（v3 更新）
 **项目**: qmd-py (Query Markup Documents, Python port)
 **本项目在系统中的定位**: 向量数据库（类比 Chroma / Milvus）
 
@@ -44,76 +47,17 @@ qmd 暴露**两个对等的对外接口**：
 
 两者必须语义对齐：CLI 命令的 JSON 输出 = Python API 对应方法返回 pydantic `.model_dump(mode="json")`。
 
+**v3**：所有 pydantic / Protocol 定义位于 qmd 项目自身 `qmd/models.py`，从 `qmd/__init__.py` 导出。下游（Scrivai / GovDoc）直接 `from qmd import ...`。
 
 ```python
-# qmd (public API)
-from pathlib import Path
-from typing import Any, Literal, Protocol
-from pydantic import BaseModel
-
-class ChunkRef(BaseModel):
-    chunk_id: str
-    document_id: str
-    collection: str
-    position: int
-    char_start: int
-    char_end: int
-
-class SearchResult(BaseModel):
-    ref: ChunkRef
-    text: str
-    score: float
-    bm25_score: float | None = None
-    vector_score: float | None = None
-    rerank_score: float | None = None
-    metadata: dict[str, Any] = {}
-
-class CollectionInfo(BaseModel):
-    name: str
-    document_count: int
-    chunk_count: int
-    context: str | None = None
-
-class Collection(Protocol):
-    name: str
-
-    def add_document(
-        self,
-        document_id: str,
-        markdown: str,
-        metadata: dict[str, Any] | None = None,
-    ) -> None: ...
-
-    def update_document(
-        self,
-        document_id: str,
-        markdown: str,
-        metadata: dict[str, Any] | None = None,
-    ) -> None: ...
-
-    def delete_document(self, document_id: str) -> None: ...
-    def get_document_ids(self) -> list[str]: ...
-
-    def hybrid_search(
-        self,
-        query: str,
-        *,
-        top_k: int = 5,
-        filters: dict[str, Any] | None = None,
-        rerank: bool = True,
-    ) -> list[SearchResult]: ...
-
-    def info(self) -> CollectionInfo: ...
-
-class QmdClient(Protocol):
-    def create_collection(self, name: str, context: str | None = None) -> Collection: ...
-    def get_collection(self, name: str) -> Collection: ...
-    def has_collection(self, name: str) -> bool: ...
-    def delete_collection(self, name: str) -> None: ...
-    def list_collections(self) -> list[CollectionInfo]: ...
-
-def connect(db_path: str | Path | None = None) -> QmdClient: ...
+from qmd import (
+    ChunkRef, SearchResult, CollectionInfo,   # pydantic models
+    Collection, QmdClient,                    # Protocols
+    connect,                                  # 工厂函数 connect(db_path) -> QmdClient
+)
 ```
+
+完整 pydantic 定义见源文件 `qmd-py/qmd/models.py`。本文档不再内嵌代码。
 
 ### 3.1 不变量（契约测试会检查）
 

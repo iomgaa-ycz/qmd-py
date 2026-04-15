@@ -1,7 +1,10 @@
 # qmd-py 任务分解（Task Document）
 
+> **版本**: v3（2026-04-15）
+> **v2→v3 变更**：T0.2 明确要求 pydantic/Protocol 集中在 `qmd/models.py`；design.md 不再内嵌代码。**不新增外部依赖**——qmd 仍自包含。
+
 **依据**: `design.md` + `/home/iomgaa/Projects/GOVDOC_PROGRAM_PLAN.md`
-**开发分支**: `feat/m0-contract-freeze`
+**开发分支**: `feat/v3-p0-cleanup`（原 `feat/m0-contract-freeze` 合并到此）
 
 ---
 
