@@ -261,10 +261,11 @@ qmd-py/
 
 ### 5.3 智能 Chunking
 
-**参数**:
-- **目标大小**: 900 tokens/chunk
-- **重叠**: 15% (135 tokens)
-- **搜索窗口**: 200 tokens
+**参数** (M1 对齐 Qwen3-Embedding-0.6B 的 max_seq_length=512):
+- **目标大小**: 512 tokens/chunk
+- **重叠**: 64 tokens (~12%)
+- **搜索窗口**: ±size 字符数
+- **Token 估算**: `len(text) // 2`（启发式，中文保守；M2 换精确 Qwen3 tokenizer）
 
 **断点优先级** (分数):
 ```python
@@ -289,7 +290,7 @@ final_score = break_point.score * multiplier
 
 **代码块保护**: 绝不在 ``` 内切分
 
-**中文 token 估算**: `tokens * 2` (中文字符数估算)
+**中文 token 估算**: `len(text) // 2`（启发式，M1 阶段；M2 换精确 Qwen3 tokenizer）
 
 ### 5.4 混合检索流程
 
