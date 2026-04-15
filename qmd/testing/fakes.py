@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import threading
 from dataclasses import dataclass, field
 from typing import Any
@@ -22,6 +23,15 @@ from qmd.models import ChunkRef, CollectionInfo, SearchResult
 
 _EMBEDDING_DIM = 1024  # Qwen3-Embedding-0.6B
 _RRF_K = 60
+
+
+def _fake_rerank_score(query: str, text: str) -> float:
+    """基于 sha256 的稳定伪 rerank_score，范围 [0, 1]。
+
+    不依赖真实 reranker，仅用于 Fake 实现保持接口契约一致。
+    """
+    h = hashlib.sha256(f"{query}||{text}".encode("utf-8")).hexdigest()
+    return int(h[:8], 16) / 0xFFFFFFFF
 
 
 @dataclass
@@ -213,8 +223,8 @@ class FakeCollection:
             vec_ranks = self._vector_rank(query, candidate_indices)
             # RRF 融合
             fused = self._rrf_fuse(bm25_ranks, vec_ranks)
-            # 取 top_k
-            fused_sorted = sorted(fused.items(), key=lambda kv: -kv[1]["score"])[:top_k]
+            # 构建结果列表（先按 RRF 分降序取候选，再决定是否 rerank 排序）
+            fused_sorted = sorted(fused.items(), key=lambda kv: -kv[1]["score"])
             results: list[SearchResult] = []
             for chunk_idx, info in fused_sorted:
                 c = self._chunks[chunk_idx]
@@ -230,11 +240,16 @@ class FakeCollection:
                     score=info["score"],
                     bm25_score=info.get("bm25"),
                     vector_score=info.get("vector"),
-                    rerank_score=info["score"] if rerank else None,
+                    rerank_score=None,
                     metadata=dict(meta),
                 )
                 results.append(result)
-            return results
+            # rerank 填充稳定伪分 + 排序
+            if rerank:
+                for r in results:
+                    r.rerank_score = _fake_rerank_score(query, r.text)
+                results.sort(key=lambda r: r.rerank_score, reverse=True)  # type: ignore[arg-type]
+            return results[:top_k]
 
     def _match_filters(
         self, chunk: _ChunkRecord, filters: dict[str, Any] | None

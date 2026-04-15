@@ -89,4 +89,35 @@ def test_guide_excerpt_indexing_and_search(guide_excerpt_markdown):
     for r in results:
         extracted = guide_excerpt_markdown[r.chunk_ref.char_start : r.chunk_ref.char_end + 1]
         assert extracted == r.text
+
+
+def test_fake_rerank_fills_stable_score():
+    """FakeCollection.hybrid_search(rerank=True) → rerank_score ∈ [0,1], 稳定 + 排序影响。"""
+    from qmd.testing.fakes import FakeQmdClient
+
+    client = FakeQmdClient()
+    col = client.collection("c")
+    col.add_document("d1", "alpha beta gamma", {})
+    col.add_document("d2", "delta epsilon zeta", {})
+    col.add_document("d3", "eta theta iota", {})
+
+    # rerank=False: rerank_score 全为 None
+    r_off = col.hybrid_search("alpha", top_k=3, rerank=False)
+    assert all(r.rerank_score is None for r in r_off)
+
+    # rerank=True: rerank_score 全非 None 且 ∈ [0,1]
+    r_on_1 = col.hybrid_search("alpha", top_k=3, rerank=True)
+    assert all(r.rerank_score is not None for r in r_on_1)
+    assert all(0.0 <= r.rerank_score <= 1.0 for r in r_on_1)
+
+    # 稳定性：同 query 再跑一次，分数相同
+    r_on_2 = col.hybrid_search("alpha", top_k=3, rerank=True)
+    scores1 = {(r.chunk_ref.document_id, r.chunk_ref.chunk_index): r.rerank_score for r in r_on_1}
+    scores2 = {(r.chunk_ref.document_id, r.chunk_ref.chunk_index): r.rerank_score for r in r_on_2}
+    assert scores1 == scores2
+
+    # 排序单调：rerank_score 降序
+    scores_in_order = [r.rerank_score for r in r_on_1]
+    assert scores_in_order == sorted(scores_in_order, reverse=True)
+    client.close()
     client.close()
