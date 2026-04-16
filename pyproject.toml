@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qmd"
-version = "0.1.0"
+version = "0.1.1"
 description = "An on-device hybrid search engine for Markdown documents"
 readme = "README.md"
 license = {text = "MIT"}
@@ -23,25 +23,28 @@ classifiers = [
 ]
 dependencies = [
     "sqlite-vec",
-    "PyYAML",
     "pydantic",
     "loguru",
-    "watchdog",
+    "numpy",
+    "PyYAML>=6.0",
+    "sentence-transformers",
+    "transformers>=4.41",
 ]
 
 [project.optional-dependencies]
-mvp = [
-    "sentence-transformers",
-    "FlagEmbedding",
-    "llama-cpp-python",
-    "torch",
-]
-mcp = [
-    "mcp",
-]
 dev = [
     "pytest",
     "pytest-asyncio",
+]
+testing = [
+    "pytest",
+    "pytest-asyncio",
+    "rank-bm25",
+    "deepdiff",
+]
+perf = [
+    "datasets>=2.18",
+    "pytest-benchmark>=4.0",
 ]
 
 [project.urls]
@@ -50,12 +53,21 @@ Repository = "https://github.com/chengzhag/qmd-py"
 Issues = "https://github.com/chengzhag/qmd-py/issues"
 
 [project.scripts]
-qmd = "qmd.cli.main:main"
+qmd = "qmd.cli.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["qmd*"]
 exclude = ["reference*", "tests*"]
 
+[project.entry-points.pytest11]
+qmd_contract = "qmd.testing.contract"
+
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
 testpaths = ["tests"]
+markers = [
+    "perf: 性能基准测试，默认 skip，显式 `pytest -m perf` 触发",
+    "reranker: 需要加载真实 Qwen3-Reranker 模型（~1.2GB），默认 skip，`pytest -m reranker` 触发",
+    "expander: 需要加载真实 Qwen3-0.6B 模型（~1.2GB），默认 skip，`pytest -m expander` 触发",
+]
+addopts = "-m 'not perf and not reranker and not expander'"

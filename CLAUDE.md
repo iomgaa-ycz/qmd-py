@@ -12,7 +12,7 @@
 - **移植目标**: 
   - **功能对齐**: 实现与 qmd 相同的混合检索能力
   - **API 兼容**: 保持相似的 CLI 和 MCP 接口
-  - **模型一致**: 使用相同的 GGUF 模型（embeddinggemma-300M, Qwen3-Reranker, qmd-query-expansion）
+  - **模型一致**: 使用相同的检索模型（Qwen3-Embedding-0.6B, Qwen3-Reranker-0.6B）
   - **存储一致**: 使用相同的 SQLite + sqlite-vec 架构
 - **核心能力**: Markdown 文档的智能检索引擎
   - 智能语义边界分块 (Smart Chunking)
@@ -32,25 +32,17 @@
 | **全文检索** | SQLite FTS5 | BM25 算法 |
 | **配置管理** | PyYAML + pydantic | YAML 配置 + 类型验证 |
 | **CLI** | argparse | 保持轻量，不用 Typer/Click |
-| **MCP 服务器** | mcp (PyPI) | Model Context Protocol |
-| **测试框架** | pytest | 目标覆盖率 80% |
+| **MCP 服务器** | mcp (PyPI) | Model Context Protocol（尚未实现） |
+| **测试框架** | pytest | 目标覆盖率 85% |
 | **日志** | loguru | 禁用 print() |
 
-### 2.2 LLM 后端 (分阶段)
+### 2.2 LLM 后端
 
-#### MVP 阶段（快速验证）
 | 任务 | 库 | 模型 | 说明 |
 |------|-----|------|------|
-| **Embedding** | sentence-transformers | all-MiniLM-L6-v2 | HuggingFace 生态，快速验证 |
-| **Reranker** | FlagEmbedding | bge-reranker-v2-m3 | 成熟的重排序模型 |
-| **Query Expansion** | llama-cpp-python | qmd-query-expansion-1.7B GGUF | 必须用 GGUF（与 qmd 一致） |
-
-#### 生产阶段（与 qmd 对齐）
-| 任务 | 库 | 模型 | 说明 |
-|------|-----|------|------|
-| **Embedding** | llama-cpp-python | embeddinggemma-300M-Q8_0.gguf | 与 qmd 完全一致 |
-| **Reranker** | llama-cpp-python (手动实现) | Qwen3-Reranker-0.6B-Q8_0.gguf | 需要自己解析 logprobs |
-| **Query Expansion** | llama-cpp-python | qmd-query-expansion-1.7B-q4_k_m.gguf | 与 MVP 一致 |
+| **Embedding** | sentence-transformers | Qwen/Qwen3-Embedding-0.6B | 1024-dim，HuggingFace checkpoint，类级单例 |
+| **Reranker** | transformers | Qwen/Qwen3-Reranker-0.6B | CausalLM yes/no 打分（`P(yes) = softmax([logit_yes, logit_no])[0]`），类级单例 |
+| **Query Expansion** | transformers | Qwen/Qwen3-0.6B | CausalLM 生成 lex/vec/hyde 变体，类级单例，默认关闭（`expansion.enabled`） |
 
 ### 2.3 依赖映射表
 
@@ -58,7 +50,7 @@
 |------------------|-----------------|------|
 | better-sqlite3 | sqlite3 (内置) | SQLite 驱动 |
 | sqlite-vec | sqlite-vec (PyPI) | 向量扩展 |
-| node-llama-cpp | llama-cpp-python | GGUF 加载器 |
+| TS LLM 后端 | sentence-transformers / transformers | Embedding + Rerank 后端（HF 生态，无 C++ 编译） |
 | fast-glob | glob / pathlib | 文件匹配 |
 | yaml | PyYAML | YAML 解析 |
 | zod | pydantic | Schema 验证 |
@@ -80,62 +72,71 @@ qmd-py/
 │   └── openclaw-memory/     # OpenClaw memory 模块
 │
 ├── qmd/                     # 核心包（注意：包名是 qmd，不是 qmd_py）
-│   ├── __init__.py
+│   ├── __init__.py          # Public API：导出 6 个名字 + __version__
 │   ├── __main__.py          # CLI 入口 (python -m qmd)
+│   ├── models.py            # pydantic 模型 + Protocol（单一真相）
+│   ├── py.typed             # PEP 561 类型标记
 │   │
-│   ├── core/                # 核心模块
+│   ├── core/                # 核心实现（下游不应直接 import）
 │   │   ├── __init__.py
-│   │   ├── db.py            # SQLite 抽象层 (~50行)
-│   │   ├── store.py         # 数据层：索引、存储、Schema
-│   │   ├── chunking.py      # 智能分块算法（断点扫描、平方衰减）
-│   │   ├── retrieval.py     # 检索算法 (FTS + Vector + RRF)
-│   │   └── config.py        # 配置管理 (YAML + pydantic)
+│   │   ├── db.py            # SQLite 连接 + schema 初始化
+│   │   ├── client.py        # SqliteQmdClient 实现
+│   │   ├── collection.py    # SqliteCollection 实现（hybrid_search 完整流程）
+│   │   ├── chunking.py      # 语义边界分块（断点扫描、平方衰减）
+│   │   ├── retrieval.py     # RRF 融合 + position_aware_blend
+│   │   ├── config.py        # 配置管理 (YAML + pydantic v2)
+│   │   ├── embedding.py     # Qwen3-Embedding-0.6B 封装（sentence-transformers）
+│   │   ├── rerank.py        # Qwen3-Reranker-0.6B 封装（transformers CausalLM）
+│   │   └── expansion.py     # Qwen3-0.6B Query Expansion（可选，默认关闭）
 │   │
-│   ├── llm/                 # LLM 抽象层
+│   ├── cli/                 # CLI 命令（所有子命令合并在一个文件中）
 │   │   ├── __init__.py
-│   │   ├── base.py          # LLM 接口定义 (Protocol/ABC)
-│   │   ├── llama_cpp.py     # llama-cpp-python 实现
-│   │   ├── huggingface.py   # sentence-transformers 实现 (MVP 阶段)
-│   │   ├── models.py        # 模型管理 (下载、缓存、idle timeout)
-│   │   └── formatters.py    # Prompt 格式化 (nomic-style 等)
+│   │   └── __main__.py      # argparse 路由：search / collection / document
 │   │
-│   ├── cli/                 # CLI 命令
-│   │   ├── __init__.py
-│   │   ├── main.py          # 命令路由 (argparse)
-│   │   ├── search.py        # search/vsearch/query 命令
-│   │   ├── embed.py         # embed 命令
-│   │   ├── collection.py    # collection add/list/remove
-│   │   ├── context.py       # context 管理
-│   │   └── formatter.py     # 输出格式化 (JSON/CSV/CLI)
-│   │
-│   ├── mcp/                 # MCP 服务器
-│   │   ├── __init__.py
-│   │   ├── server.py        # MCP 服务器实现
-│   │   └── tools.py         # MCP 工具定义
-│   │
-│   └── utils/               # 工具函数
-│       ├── __init__.py
-│       ├── paths.py         # 路径处理
-│       ├── hashing.py       # 内容哈希 (SHA256)
-│       └── snippet.py       # Snippet 提取
+│   └── testing/             # 下游测试辅助
+│       ├── __init__.py      # 导出 FakeQmdClient / FakeCollection
+│       ├── fakes.py         # 纯内存实现（BM25 + numpy 向量）
+│       └── contract.py      # pytest plugin（供下游复用契约测试）
 │
-├── tests/                   # 测试
-│   ├── __init__.py
-│   ├── test_chunking.py     # 智能分块测试（关键！）
-│   ├── test_retrieval.py    # 检索算法测试
-│   ├── test_llm.py          # LLM 调用测试
-│   ├── test_store.py        # 数据层测试
+├── tests/                   # 测试（三层结构）
+│   ├── unit/                # 单元测试（mock 外部依赖）
+│   │   ├── test_chunking.py
+│   │   ├── test_config.py
+│   │   ├── test_db.py
+│   │   ├── test_retrieval.py
+│   │   ├── test_embedding.py
+│   │   ├── test_rerank.py
+│   │   ├── test_expansion.py
+│   │   ├── test_strong_signal.py
+│   │   ├── test_collection.py
+│   │   └── test_client_config.py
+│   │
+│   ├── contract/            # 契约测试（参数化 fake + sqlite）
+│   │   ├── test_public_api.py
+│   │   ├── test_protocols.py
+│   │   ├── test_invariants.py
+│   │   ├── test_fake_implementation.py
+│   │   ├── test_batch.py
+│   │   ├── test_cli_shape.py
+│   │   ├── test_smoke.py
+│   │   ├── test_rerank.py   # 需真模型，默认 skip
+│   │   ├── test_expansion.py # 需真模型，默认 skip
+│   │   └── test_blending.py
+│   │
+│   ├── perf/                # 性能测试（默认 skip）
+│   │   ├── test_hybrid_search_p95.py
+│   │   └── test_rerank_latency.py
+│   │
 │   └── fixtures/            # 测试数据
-│       └── sample_docs/
+│       ├── guide_excerpt.md
+│       ├── docs/
+│       └── notes/
 │
-├── scripts/                 # 工具脚本
-│   ├── download_models.py   # 预下载 GGUF 模型
-│   └── migrate_from_qmd.py  # 从 qmd 迁移索引数据
-│
-└── docs/                    # 文档
-    ├── architecture.md      # 架构说明
-    ├── chunking_algorithm.md # 智能分块算法详解
-    └── api.md               # API 文档
+└── docs/                    # 设计文档
+    ├── design.md            # 架构设计（v3）
+    ├── TD.md                # 任务分解
+    ├── specs/               # 各里程碑设计 spec
+    └── plans/               # 各里程碑实施计划
 ```
 
 ## 4. 核心代码规范 (Code Standards)
@@ -153,7 +154,7 @@ qmd-py/
 > **真实代码原则**
 > - **严禁使用 mock、stub、占位符、伪实现**（如随机数模拟 embedding、Jaccard 代替 reranker）
 > - MVP 不等于假代码——MVP 是功能精简但真实可用的实现
-> - 所有函数必须调用真实的底层 API（llama_cpp.Llama、sqlite-vec 等）
+> - 所有函数必须调用真实的底层 API（sentence-transformers、transformers、sqlite-vec 等）
 > - 如果某个功能暂时无法实现（如缺少模型文件），应抛出明确的 NotImplementedError，而非用 mock 伪装
 
 ### 4.2 代码风格
@@ -185,7 +186,7 @@ qmd-py/
   
   # 2. 第三方库
   import numpy as np
-  from llama_cpp import Llama
+  from sentence_transformers import SentenceTransformer
   
   # 3. 项目内部
   from qmd.core.db import open_database
@@ -221,7 +222,7 @@ qmd-py/
 
 - **禁止在被测代码中使用 mock**:
   - 被测试的源码（`qmd/` 下的代码）必须是真实实现
-  - 测试代码（`tests/` 下）可以使用 `unittest.mock` 来模拟外部依赖（如 GGUF 模型文件），但必须确保 mock 的行为与真实 API 一致
+  - 测试代码（`tests/` 下）可以使用 `unittest.mock` 来模拟外部依赖（如 HuggingFace 模型），但必须确保 mock 的行为与真实 API 一致
 
 ### 4.5 Git 规范
 
@@ -261,10 +262,11 @@ qmd-py/
 
 ### 5.3 智能 Chunking
 
-**参数**:
-- **目标大小**: 900 tokens/chunk
-- **重叠**: 15% (135 tokens)
-- **搜索窗口**: 200 tokens
+**参数** (M1 对齐 Qwen3-Embedding-0.6B 的 max_seq_length=512):
+- **目标大小**: 512 tokens/chunk
+- **重叠**: 64 tokens (~12%)
+- **搜索窗口**: ±size 字符数
+- **Token 估算**: `len(text) // 2`（启发式，中文保守；M2 换精确 Qwen3 tokenizer）
 
 **断点优先级** (分数):
 ```python
@@ -289,7 +291,7 @@ final_score = break_point.score * multiplier
 
 **代码块保护**: 绝不在 ``` 内切分
 
-**中文 token 估算**: `tokens * 2` (中文字符数估算)
+**中文 token 估算**: `len(text) // 2`（启发式，M1 阶段；M2 换精确 Qwen3 tokenizer）
 
 ### 5.4 混合检索流程
 
@@ -378,31 +380,15 @@ def update_document(path: str, new_content: str):
 
 ## 7. 与 qmd 的差异 (Differences from QMD)
 
-### 7.1 不可避免的差异
+### 7.1 技术栈差异
 
-| 功能 | qmd (TypeScript) | qmd-py (Python) | 影响 |
-|------|------------------|-----------------|------|
-| **GGUF 加载器** | node-llama-cpp | llama-cpp-python | ⚠️ Python 版功能较弱 |
-| **并行 Embedding** | 多 context 并行 | 单线程循环 (llama-cpp) / 批处理 (HF) | ⚠️ 性能下降 |
-| **Reranker API** | 内置 `rankAll()` | 需手动实现 (logprobs 解析) | ⚠️ 需自己编码 |
-| **Context 管理** | 独立 context 对象 | 较简单 | ⚠️ 抽象层较薄 |
-| **Idle Timeout** | 原生支持 | 需用 `threading.Timer` | ⚠️ 需自己实现 |
+实现上均走 torch + HuggingFace 生态（sentence-transformers / transformers），无 C++ 编译依赖。
 
-### 7.2 分阶段策略
+### 7.2 当前技术栈
 
-#### MVP 阶段（2 周内可用）
-- **Embedding**: `sentence-transformers` (all-MiniLM-L6-v2)
-- **Reranker**: `FlagEmbedding` (bge-reranker-v2-m3)
-- **Query Expansion**: `llama-cpp-python` (qmd-query-expansion GGUF)
-
-**优势**: 快速验证核心逻辑，HuggingFace 生态成熟
-
-#### 生产阶段（与 qmd 对齐）
-- **Embedding**: `llama-cpp-python` + embeddinggemma GGUF
-- **Reranker**: 手动实现 (logprobs 解析)
-- **Query Expansion**: 同 MVP
-
-**优势**: 与 qmd 结果完全一致，可直接对比质量
+- **Embedding**: sentence-transformers + Qwen/Qwen3-Embedding-0.6B
+- **Reranker**: transformers + Qwen/Qwen3-Reranker-0.6B (CausalLM yes/no 打分)
+- **优势**: 技术栈统一（都走 torch / HuggingFace），无 C++ 编译、无 logprobs 手工解析
 
 ### 7.3 包名差异
 

@@ -1,9 +1,5 @@
-"""
-qmd CLI 模块
+"""qmd CLI 模块。入口为 qmd.cli.__main__:main。"""
 
-提供命令行接口功能。
-"""
-
-from qmd.cli.main import main
+from qmd.cli.__main__ import main
 
 __all__ = ["main"]
