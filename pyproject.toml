@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qmd"
-version = "0.1.1"
+version = "0.1.2"
 description = "An on-device hybrid search engine for Markdown documents"
 readme = "README.md"
 license = {text = "MIT"}
