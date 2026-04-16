@@ -18,6 +18,9 @@ import numpy as np
 from loguru import logger
 from rank_bm25 import BM25Okapi
 
+from qmd.core.config import QmdConfig
+from qmd.core.retrieval import position_aware_blend
+
 from qmd.core.embedding import Embedder
 from qmd.models import ChunkRef, CollectionInfo, SearchResult
 
@@ -78,7 +81,7 @@ def _tokenize(text: str) -> list[str]:
 class FakeCollection:
     """Fake 的单 collection 实现，满足 qmd.models.Collection Protocol。"""
 
-    def __init__(self, name: str, embedder: Embedder) -> None:
+    def __init__(self, name: str, embedder: Embedder, config: QmdConfig | None = None) -> None:
         self.name = name
         self._docs: dict[str, _DocRecord] = {}
         self._chunks: list[_ChunkRecord] = []
@@ -86,6 +89,7 @@ class FakeCollection:
         self._bm25: BM25Okapi | None = None
         self._bm25_dirty = True
         self._embedder = embedder
+        self._config = config
 
     def add_document(
         self,
@@ -249,6 +253,11 @@ class FakeCollection:
                 for r in results:
                     r.rerank_score = _fake_rerank_score(query, r.text)
                 results.sort(key=lambda r: r.rerank_score, reverse=True)  # type: ignore[arg-type]
+                if (self._config
+                    and self._config.retrieval.blending_mode == "position_aware"):
+                    results = position_aware_blend(
+                        results, self._config.retrieval.blending_weights
+                    )
             return results[:top_k]
 
     def _match_filters(
