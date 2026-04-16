@@ -68,5 +68,6 @@ testpaths = ["tests"]
 markers = [
     "perf: 性能基准测试，默认 skip，显式 `pytest -m perf` 触发",
     "reranker: 需要加载真实 Qwen3-Reranker 模型（~1.2GB），默认 skip，`pytest -m reranker` 触发",
+    "expander: 需要加载真实 Qwen3-0.6B 模型（~1.2GB），默认 skip，`pytest -m expander` 触发",
 ]
-addopts = "-m 'not perf and not reranker'"
+addopts = "-m 'not perf and not reranker and not expander'"
