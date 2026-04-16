@@ -1,5 +1,12 @@
-"""Reciprocal Rank Fusion（RRF）纯函数。"""
+"""Reciprocal Rank Fusion（RRF）纯函数 + Position-Aware Blending。"""
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from qmd.core.config import BlendingWeights
+
+from qmd.models import SearchResult
 
 
 def rrf_fuse(
@@ -26,3 +33,27 @@ def rrf_fuse(
             scores[rowid] = scores.get(rowid, 0.0) + w / (k + rank)
     # 先按 rowid 升序（tie-breaker），再按 score 降序
     return sorted(scores.items(), key=lambda x: (-x[1], x[0]))
+
+
+def position_aware_blend(
+    candidates: list[SearchResult],
+    blending_weights: "BlendingWeights",
+) -> list[SearchResult]:
+    """按 rank 分档混合 RRF score 和 rerank score。
+
+    前提：candidates 已按 rerank_score 降序排列，每个 c.rerank_score 非 None。
+    blending 后根据混合分数重新排序。
+    """
+    if not candidates:
+        return candidates
+    for i, c in enumerate(candidates):
+        rank = i + 1
+        if rank <= 3:
+            rrf_w, rerank_w = blending_weights.top
+        elif rank <= 10:
+            rrf_w, rerank_w = blending_weights.mid
+        else:
+            rrf_w, rerank_w = blending_weights.tail
+        c.score = rrf_w * c.score + rerank_w * (c.rerank_score or 0.0)
+    candidates.sort(key=lambda c: c.score, reverse=True)
+    return candidates
