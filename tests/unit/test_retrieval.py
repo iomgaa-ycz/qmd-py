@@ -39,3 +39,29 @@ def test_rrf_formula():
     scores = dict(result)
     assert abs(scores[10] - 1 / (k + 0)) < 1e-9
     assert abs(scores[20] - 1 / (k + 1)) < 1e-9
+
+
+def test_weighted_rrf_double_weight():
+    """weights=[2.0, 1.0] 时第一个列表得分翻倍。"""
+    k = 60
+    # rowid=1 只在 ranking a（weight=2.0）rank0；rowid=2 只在 ranking b（weight=1.0）rank0
+    result = rrf_fuse([[1], [2]], k=k, weights=[2.0, 1.0])
+    scores = dict(result)
+    assert abs(scores[1] - 2.0 / (k + 0)) < 1e-9
+    assert abs(scores[2] - 1.0 / (k + 0)) < 1e-9
+    # rowid=1 得分更高
+    assert scores[1] > scores[2]
+
+
+def test_weighted_rrf_none_weights_equals_unweighted():
+    """weights=None 结果应与 weights=[1.0, 1.0] 完全相同。"""
+    rankings = [[1, 2, 3], [3, 2, 4]]
+    result_none = rrf_fuse(rankings, k=60, weights=None)
+    result_ones = rrf_fuse(rankings, k=60, weights=[1.0, 1.0])
+    assert result_none == result_ones
+
+
+def test_weighted_rrf_empty_with_weights():
+    """空列表 + weights 不报错，返回空。"""
+    result = rrf_fuse([[], []], k=60, weights=[2.0, 3.0])
+    assert result == []
