@@ -68,3 +68,57 @@ def test_p95_hybrid_search_under_500ms(large_corpus_db: Path):
 
     print(f"\n{report}")
     assert p95 < 500, f"P95={p95:.1f}ms (target <500ms); 报告: {report_path}"
+
+
+def test_batch_vs_loop_speedup_at_scale(large_corpus_db: Path):
+    """50 文档批量 vs 循环单加，加速比 ≥ 3x。
+
+    M2 小 benchmark (20 doc) 只到 1.8x（GPU kernel 固定开销 + tmpfs fsync 零成本），
+    大规模下 embedding batch 吞吐优势显著，3x 应可稳定达标。
+    """
+    import tempfile
+
+    from qmd import connect
+
+    docs = [
+        {"document_id": f"perf_d{i}", "markdown": f"批量性能测试段落 {i}。\n\n内容 " * 30, "metadata": {"i": i}}
+        for i in range(50)
+    ]
+
+    with tempfile.TemporaryDirectory() as td:
+        # 循环单加
+        client1 = connect(Path(td) / "loop.sqlite")
+        col1 = client1.collection("c")
+        t0 = time.perf_counter()
+        for d in docs:
+            col1.add_document(d["document_id"], d["markdown"], d["metadata"])
+        loop_time = time.perf_counter() - t0
+        client1.close()
+
+        # 批量
+        client2 = connect(Path(td) / "batch.sqlite")
+        col2 = client2.collection("c")
+        t0 = time.perf_counter()
+        col2.add_documents(docs)
+        batch_time = time.perf_counter() - t0
+        client2.close()
+
+    speedup = loop_time / batch_time if batch_time > 0 else 0
+
+    report = {
+        "test": "batch_vs_loop_speedup",
+        "n_docs": len(docs),
+        "loop_s": round(loop_time, 3),
+        "batch_s": round(batch_time, 3),
+        "speedup": round(speedup, 1),
+        "platform": platform.platform(),
+    }
+    report_path = Path("tests/perf/.cache/report_batch_speedup.json")
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    print(f"\n{report}")
+    assert speedup >= 3.0, (
+        f"batch={batch_time:.3f}s, loop={loop_time:.3f}s, "
+        f"加速比={speedup:.1f}x (目标 ≥3x); 报告: {report_path}"
+    )
