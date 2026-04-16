@@ -93,11 +93,20 @@ def _parse_expansion_output(raw: str) -> dict[str, list[str]]:
     """解析模型输出的 JSON。失败返回空变体。"""
     try:
         start = raw.find("{")
-        end = raw.rfind("}") + 1
-        if start < 0 or end <= start:
+        if start < 0:
             logger.warning("expansion 输出无 JSON: {}", raw[:200])
             return dict(_EMPTY_RESULT)
-        data = json.loads(raw[start:end])
+        # 逐个 } 尝试解析，取第一个合法 JSON 对象
+        for i in range(start, len(raw)):
+            if raw[i] == "}":
+                try:
+                    data = json.loads(raw[start : i + 1])
+                    break
+                except json.JSONDecodeError:
+                    continue
+        else:
+            logger.warning("expansion 输出无完整 JSON: {}", raw[:200])
+            return dict(_EMPTY_RESULT)
         result: dict[str, list[str]] = {}
         for key in ("lex", "vec", "hyde"):
             val = data.get(key, [])
