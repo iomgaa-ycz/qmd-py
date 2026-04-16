@@ -110,27 +110,23 @@ CLI 的 JSON 输出 schema 在契约测试中和 Python API 比对（防止漂�
 
 ```
 qmd/
-├── __init__.py            ← public API only (见 §3)
+├── __init__.py            ← public API：6 个名字 + __version__
+├── models.py              ← pydantic 模型 + Protocol（单一真相）
 ├── core/
-│   ├── models.py          ← pydantic: ChunkRef, SearchResult, CollectionInfo
-│   ├── client.py          ← QmdClient 实现
-│   ├── collection.py      ← Collection 实现
+│   ├── client.py          ← SqliteQmdClient 实现
+│   ├── collection.py      ← SqliteCollection 实现（hybrid_search 完整流程）
 │   ├── db.py              ← SQLite + sqlite-vec + FTS5 schema
-│   ├── chunking.py        ← 语义边界分块（复用旧代码）
-│   ├── retrieval.py       ← BM25 + vector + RRF（复用旧代码）
-│   └── rerank.py          ← Qwen3-Reranker（可选）
-├── llm/                   ← embedding / rerank 后端
-│   ├── base.py
-│   └── sentence_tf.py
+│   ├── chunking.py        ← 语义边界分块
+│   ├── retrieval.py       ← RRF 融合 + position_aware_blend
+│   ├── config.py          ← 配置管理 (YAML + pydantic v2)
+│   ├── embedding.py       ← Qwen3-Embedding-0.6B（sentence-transformers）
+│   ├── rerank.py          ← Qwen3-Reranker-0.6B（transformers CausalLM）
+│   └── expansion.py       ← Qwen3-0.6B Query Expansion（可选）
 ├── testing/
 │   ├── fakes.py           ← FakeQmdClient / FakeCollection（内存版，用于 Scrivai 单测）
 │   └── contract.py        ← 契约测试套件（pytest plugin，供下游复用）
-├── cli/                   ← 命令行（索引管理用，不影响 Python API）
-├── mcp/                   ← MCP 服务器（独立于 GovDoc 流程，可选启用）
-└── tests/
-    ├── unit/
-    ├── contract/          ← 契约测试本体
-    └── fixtures/
+└── cli/
+    └── __main__.py        ← argparse 路由：search / collection / document
 ```
 
 ### 4.1 关键实现决策
@@ -140,7 +136,7 @@ qmd/
 - **BM25**：SQLite FTS5 内置（trigram tokenizer，支持中文）
 - **融合**：Reciprocal Rank Fusion（RRF），k=60
 - **Rerank**：Qwen/Qwen3-Reranker-0.6B（transformers HF checkpoint，可选开关，`hybrid_search(rerank=True)`；配置见 `qmd.yaml` `rerank.enabled`）
-- **Query Expansion**：延后到 M3（见 `docs/plans/m3-backlog.md`）
+- **Query Expansion**：Qwen/Qwen3-0.6B（transformers CausalLM，可选开关，`qmd.yaml` `expansion.enabled`，默认关闭）
 
 ## 4.2 CLI 实现要点
 
@@ -208,7 +204,6 @@ Scrivai 的 Chain（Extract/Audit/Generate）**也会**临时创建 collection�
 - 多模态（只 Markdown 文本）
 - 跨 collection 联合检索（Scrivai 可以串行多次 search + 合并）
 - 权限控制（MVP 单用户）
-- Query Expansion（M2 再说）
 
 ## 8. 性能目标（M2 基线）
 
@@ -241,6 +236,17 @@ retrieval:
   rrf_k: 60
   bm25_top_k: 20
   vector_top_k: 20
+  blending_mode: "pure_rerank"   # 或 "position_aware"
+  blending_weights:
+    top: [0.75, 0.25]            # rank 1-3
+    mid: [0.60, 0.40]            # rank 4-10
+    tail: [0.40, 0.60]           # rank 11+
+
+expansion:
+  enabled: false
+  model_name: "Qwen/Qwen3-0.6B"
+  strong_signal_threshold: 0.85
+  strong_signal_gap: 0.15
 ```
 
 ---

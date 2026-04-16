@@ -32,8 +32,8 @@
 | **全文检索** | SQLite FTS5 | BM25 算法 |
 | **配置管理** | PyYAML + pydantic | YAML 配置 + 类型验证 |
 | **CLI** | argparse | 保持轻量，不用 Typer/Click |
-| **MCP 服务器** | mcp (PyPI) | Model Context Protocol |
-| **测试框架** | pytest | 目标覆盖率 80% |
+| **MCP 服务器** | mcp (PyPI) | Model Context Protocol（尚未实现） |
+| **测试框架** | pytest | 目标覆盖率 85% |
 | **日志** | loguru | 禁用 print() |
 
 ### 2.2 LLM 后端
@@ -42,7 +42,7 @@
 |------|-----|------|------|
 | **Embedding** | sentence-transformers | Qwen/Qwen3-Embedding-0.6B | 1024-dim，HuggingFace checkpoint，类级单例 |
 | **Reranker** | transformers | Qwen/Qwen3-Reranker-0.6B | CausalLM yes/no 打分（`P(yes) = softmax([logit_yes, logit_no])[0]`），类级单例 |
-| **Query Expansion** | — | — | M2 决定延后到 M3 评估（见 `docs/plans/m3-backlog.md`） |
+| **Query Expansion** | transformers | Qwen/Qwen3-0.6B | CausalLM 生成 lex/vec/hyde 变体，类级单例，默认关闭（`expansion.enabled`） |
 
 ### 2.3 依赖映射表
 
@@ -72,61 +72,71 @@ qmd-py/
 │   └── openclaw-memory/     # OpenClaw memory 模块
 │
 ├── qmd/                     # 核心包（注意：包名是 qmd，不是 qmd_py）
-│   ├── __init__.py
+│   ├── __init__.py          # Public API：导出 6 个名字 + __version__
 │   ├── __main__.py          # CLI 入口 (python -m qmd)
+│   ├── models.py            # pydantic 模型 + Protocol（单一真相）
+│   ├── py.typed             # PEP 561 类型标记
 │   │
-│   ├── core/                # 核心模块
+│   ├── core/                # 核心实现（下游不应直接 import）
 │   │   ├── __init__.py
-│   │   ├── db.py            # SQLite 抽象层 (~50行)
-│   │   ├── store.py         # 数据层：索引、存储、Schema
-│   │   ├── chunking.py      # 智能分块算法（断点扫描、平方衰减）
-│   │   ├── retrieval.py     # 检索算法 (FTS + Vector + RRF)
-│   │   └── config.py        # 配置管理 (YAML + pydantic)
+│   │   ├── db.py            # SQLite 连接 + schema 初始化
+│   │   ├── client.py        # SqliteQmdClient 实现
+│   │   ├── collection.py    # SqliteCollection 实现（hybrid_search 完整流程）
+│   │   ├── chunking.py      # 语义边界分块（断点扫描、平方衰减）
+│   │   ├── retrieval.py     # RRF 融合 + position_aware_blend
+│   │   ├── config.py        # 配置管理 (YAML + pydantic v2)
+│   │   ├── embedding.py     # Qwen3-Embedding-0.6B 封装（sentence-transformers）
+│   │   ├── rerank.py        # Qwen3-Reranker-0.6B 封装（transformers CausalLM）
+│   │   └── expansion.py     # Qwen3-0.6B Query Expansion（可选，默认关闭）
 │   │
-│   ├── llm/                 # LLM 抽象层
+│   ├── cli/                 # CLI 命令（所有子命令合并在一个文件中）
 │   │   ├── __init__.py
-│   │   ├── base.py          # LLM 接口定义 (Protocol/ABC)
-│   │   ├── sentence_tf.py   # sentence-transformers 实现（Embedding + Rerank）
-│   │   ├── models.py        # 模型管理 (下载、缓存、idle timeout)
-│   │   └── formatters.py    # Prompt 格式化 (nomic-style 等)
+│   │   └── __main__.py      # argparse 路由：search / collection / document
 │   │
-│   ├── cli/                 # CLI 命令
-│   │   ├── __init__.py
-│   │   ├── main.py          # 命令路由 (argparse)
-│   │   ├── search.py        # search/vsearch/query 命令
-│   │   ├── embed.py         # embed 命令
-│   │   ├── collection.py    # collection add/list/remove
-│   │   ├── context.py       # context 管理
-│   │   └── formatter.py     # 输出格式化 (JSON/CSV/CLI)
-│   │
-│   ├── mcp/                 # MCP 服务器
-│   │   ├── __init__.py
-│   │   ├── server.py        # MCP 服务器实现
-│   │   └── tools.py         # MCP 工具定义
-│   │
-│   └── utils/               # 工具函数
-│       ├── __init__.py
-│       ├── paths.py         # 路径处理
-│       ├── hashing.py       # 内容哈希 (SHA256)
-│       └── snippet.py       # Snippet 提取
+│   └── testing/             # 下游测试辅助
+│       ├── __init__.py      # 导出 FakeQmdClient / FakeCollection
+│       ├── fakes.py         # 纯内存实现（BM25 + numpy 向量）
+│       └── contract.py      # pytest plugin（供下游复用契约测试）
 │
-├── tests/                   # 测试
-│   ├── __init__.py
-│   ├── test_chunking.py     # 智能分块测试（关键！）
-│   ├── test_retrieval.py    # 检索算法测试
-│   ├── test_llm.py          # LLM 调用测试
-│   ├── test_store.py        # 数据层测试
+├── tests/                   # 测试（三层结构）
+│   ├── unit/                # 单元测试（mock 外部依赖）
+│   │   ├── test_chunking.py
+│   │   ├── test_config.py
+│   │   ├── test_db.py
+│   │   ├── test_retrieval.py
+│   │   ├── test_embedding.py
+│   │   ├── test_rerank.py
+│   │   ├── test_expansion.py
+│   │   ├── test_strong_signal.py
+│   │   ├── test_collection.py
+│   │   └── test_client_config.py
+│   │
+│   ├── contract/            # 契约测试（参数化 fake + sqlite）
+│   │   ├── test_public_api.py
+│   │   ├── test_protocols.py
+│   │   ├── test_invariants.py
+│   │   ├── test_fake_implementation.py
+│   │   ├── test_batch.py
+│   │   ├── test_cli_shape.py
+│   │   ├── test_smoke.py
+│   │   ├── test_rerank.py   # 需真模型，默认 skip
+│   │   ├── test_expansion.py # 需真模型，默认 skip
+│   │   └── test_blending.py
+│   │
+│   ├── perf/                # 性能测试（默认 skip）
+│   │   ├── test_hybrid_search_p95.py
+│   │   └── test_rerank_latency.py
+│   │
 │   └── fixtures/            # 测试数据
-│       └── sample_docs/
+│       ├── guide_excerpt.md
+│       ├── docs/
+│       └── notes/
 │
-├── scripts/                 # 工具脚本
-│   ├── download_models.py   # 预下载 HuggingFace 模型
-│   └── migrate_from_qmd.py  # 从 qmd 迁移索引数据
-│
-└── docs/                    # 文档
-    ├── architecture.md      # 架构说明
-    ├── chunking_algorithm.md # 智能分块算法详解
-    └── api.md               # API 文档
+└── docs/                    # 设计文档
+    ├── design.md            # 架构设计（v3）
+    ├── TD.md                # 任务分解
+    ├── specs/               # 各里程碑设计 spec
+    └── plans/               # 各里程碑实施计划
 ```
 
 ## 4. 核心代码规范 (Code Standards)

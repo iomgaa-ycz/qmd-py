@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Protocol
 
 
 # =============================================================================
@@ -204,33 +203,3 @@ def chunk_document(text: str, size: int = 512, overlap: int = 64) -> list[Chunk]
         assert next_cursor > cursor, "liveness: cursor must advance"
         cursor = min(next_cursor, total)
     return chunks
-
-
-# =============================================================================
-# 兼容旧接口（供 store.py 等内部模块使用）
-# =============================================================================
-
-class Tokenizer(Protocol):
-    """Tokenizer 接口"""
-    def tokenize(self, text: str) -> list[int]:
-        """将文本转换为 token ID 列表"""
-        ...
-
-
-def chunk_document_by_tokens(
-    content: str,
-    tokenizer: Tokenizer | None = None,
-    max_tokens: int = CHUNK_SIZE_TOKENS,
-    overlap_tokens: int = CHUNK_OVERLAP_TOKENS,
-) -> list[Chunk]:
-    """按 token 数切分文档（兼容旧接口，内部委托给 chunk_document）。
-
-    参数：
-        content: 文档内容。
-        tokenizer: 暂未使用，保留接口兼容性。
-        max_tokens: 每块最大 token 数。
-        overlap_tokens: 块间重叠 token 数。
-
-    返回：Chunk 列表。
-    """
-    return chunk_document(content, size=max_tokens, overlap=overlap_tokens)

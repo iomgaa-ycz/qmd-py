@@ -24,6 +24,6 @@ def test_version_attribute():
     "load_config", "init_schema", "open_database",
 ])
 def test_legacy_symbols_not_exported(symbol: str):
-    """旧符号在 qmd 顶层不可见（M3 前仍可通过 qmd.core.* 访问）。"""
+    """旧符号在 qmd 顶层不可见。"""
     import qmd
     assert not hasattr(qmd, symbol), f"旧符号 {symbol} 不应出现在 qmd 顶层"

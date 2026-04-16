@@ -15,7 +15,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
-from loguru import logger
 from rank_bm25 import BM25Okapi
 
 from qmd.core.config import QmdConfig

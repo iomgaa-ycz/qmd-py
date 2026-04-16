@@ -5,7 +5,7 @@
     Collection, QmdClient                    —— Protocol
     connect                                  —— 工厂函数
 
-内部实现位于 qmd.core（M1 才会用到）和 qmd.testing（Fake）。
+内部实现位于 qmd.core 和 qmd.testing（Fake）。
 下游代码请勿直接 import qmd.core.*。
 """
 from __future__ import annotations
@@ -28,4 +28,4 @@ __all__ = [
     "connect",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"

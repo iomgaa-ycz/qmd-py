@@ -1,7 +1,6 @@
 """契约测试：FakeQmdClient 自身正确性（仅 Fake 后端）。
 
-M1 起这些测试直接实例化 FakeQmdClient，不再通过 qmd.connect()——
-因为 connect() 在 M1 已切换为返回 SqliteQmdClient。
+直接实例化 FakeQmdClient（connect() 返回 SqliteQmdClient）。
 跨后端的不变量测试见 test_invariants.py（参数化 fake + sqlite）。
 """
 from __future__ import annotations
