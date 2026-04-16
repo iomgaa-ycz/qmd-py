@@ -53,7 +53,6 @@ htmlcov/
 
 # 临时报告
 audit_report.md
-CHANGELOG.md
 
 # e2e 临时脚本
 e2e_*.py
