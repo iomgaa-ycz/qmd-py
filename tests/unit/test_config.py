@@ -99,3 +99,68 @@ def test_overrides_none_section_raises(tmp_path: Path):
             db_path=tmp_path / "db.sqlite",
             config_overrides={"chunking": None},
         )
+
+
+# ── 新增测试：ExpansionConfig + BlendingWeights ──────────────────────────────
+
+def test_expansion_defaults(tmp_path: Path):
+    """expansion 默认值校验。"""
+    cfg = QmdConfig.load(db_path=tmp_path / "db.sqlite")
+    assert cfg.expansion.enabled is False
+    assert cfg.expansion.model_name == "Qwen/Qwen3-0.6B"
+    assert cfg.expansion.strong_signal_threshold == 0.85
+    assert cfg.expansion.strong_signal_gap == 0.15
+
+
+def test_blending_defaults(tmp_path: Path):
+    """retrieval.blending_mode 和 blending_weights 默认值校验。"""
+    cfg = QmdConfig.load(db_path=tmp_path / "db.sqlite")
+    assert cfg.retrieval.blending_mode == "pure_rerank"
+    assert cfg.retrieval.blending_weights.top == (0.75, 0.25)
+    assert cfg.retrieval.blending_weights.mid == (0.60, 0.40)
+    assert cfg.retrieval.blending_weights.tail == (0.40, 0.60)
+
+
+def test_expansion_yaml_override(tmp_path: Path):
+    """yaml 可以启用 expansion。"""
+    yaml_path = tmp_path / "qmd.yaml"
+    yaml_path.write_text(
+        yaml.safe_dump({"expansion": {"enabled": True, "model_name": "Qwen/Qwen3-1.7B"}}),
+        encoding="utf-8",
+    )
+    cfg = QmdConfig.load(db_path=tmp_path / "db.sqlite")
+    assert cfg.expansion.enabled is True
+    assert cfg.expansion.model_name == "Qwen/Qwen3-1.7B"
+    # 未覆盖字段保持默认
+    assert cfg.expansion.strong_signal_threshold == 0.85
+
+
+def test_blending_yaml_override(tmp_path: Path):
+    """yaml 可覆盖 blending_mode 和 blending_weights（部分覆盖保留默认）。"""
+    yaml_path = tmp_path / "qmd.yaml"
+    yaml_path.write_text(
+        yaml.safe_dump({
+            "retrieval": {
+                "blending_mode": "position_aware",
+                "blending_weights": {"top": [0.8, 0.2]},
+            }
+        }),
+        encoding="utf-8",
+    )
+    cfg = QmdConfig.load(db_path=tmp_path / "db.sqlite")
+    assert cfg.retrieval.blending_mode == "position_aware"
+    assert cfg.retrieval.blending_weights.top == (0.8, 0.2)
+    # 未覆盖字段保持默认
+    assert cfg.retrieval.blending_weights.mid == (0.60, 0.40)
+    assert cfg.retrieval.blending_weights.tail == (0.40, 0.60)
+
+
+def test_blending_invalid_mode_raises(tmp_path: Path):
+    """无效 blending_mode → ConfigError。"""
+    yaml_path = tmp_path / "qmd.yaml"
+    yaml_path.write_text(
+        yaml.safe_dump({"retrieval": {"blending_mode": "invalid_mode"}}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError):
+        QmdConfig.load(db_path=tmp_path / "db.sqlite")

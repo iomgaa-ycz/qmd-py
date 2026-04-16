@@ -50,11 +50,32 @@ class RerankConfig(BaseModel):
     top_k_candidates: int = 40
 
 
+class BlendingWeights(BaseModel):
+    """Position-Aware Blending 的权重配置（rrf_weight, rerank_weight）。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    top: tuple[float, float] = (0.75, 0.25)   # Rank 1-3
+    mid: tuple[float, float] = (0.60, 0.40)   # Rank 4-10
+    tail: tuple[float, float] = (0.40, 0.60)  # Rank 11+
+
+
 class RetrievalConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     rrf_k: int = 60
     bm25_top_k: int = 20
     vector_top_k: int = 20
+    blending_mode: Literal["pure_rerank", "position_aware"] = "pure_rerank"
+    blending_weights: BlendingWeights = BlendingWeights()
+
+
+class ExpansionConfig(BaseModel):
+    """LLM Query Expansion 配置。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    enabled: bool = False
+    model_name: str = "Qwen/Qwen3-0.6B"
+    strong_signal_threshold: float = 0.85
+    strong_signal_gap: float = 0.15
 
 
 class QmdConfig(BaseModel):
@@ -63,6 +84,7 @@ class QmdConfig(BaseModel):
     embedding: EmbeddingConfig = EmbeddingConfig()
     rerank: RerankConfig = RerankConfig()
     retrieval: RetrievalConfig = RetrievalConfig()
+    expansion: ExpansionConfig = ExpansionConfig()
 
     @classmethod
     def load(
