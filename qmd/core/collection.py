@@ -14,7 +14,7 @@ from typing import Any
 from qmd.core.chunking import chunk_document
 from qmd.core.config import QmdConfig
 from qmd.core.embedding import Embedder
-from qmd.core.retrieval import rrf_fuse
+from qmd.core.retrieval import position_aware_blend, rrf_fuse
 from qmd.models import ChunkRef, CollectionInfo, SearchResult
 
 def _vec_to_sqlite_literal(vec: list[float]) -> str:
@@ -238,6 +238,62 @@ class SqliteCollection:
             (self.name, document_id),
         )
 
+    # --- search helpers ---
+
+    def _bm25_search(self, query: str, filter_sql: str, filter_params: list[Any]) -> list[int]:
+        """BM25 通道，返回 rowid 列表。调用方须持锁。"""
+        bm25_sql = f"""
+            SELECT c.rowid FROM chunks_fts f
+            JOIN chunks c ON c.rowid = f.rowid
+            JOIN documents d ON d.collection = c.collection AND d.id = c.document_id
+            WHERE c.collection = ? AND f.text MATCH ?{filter_sql}
+            ORDER BY rank LIMIT ?
+        """
+        rows = self._conn.execute(
+            bm25_sql,
+            (self.name, query, *filter_params, self.config.retrieval.bm25_top_k),
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def _vector_search(self, query_vec: list[float], filter_sql: str, filter_params: list[Any]) -> list[int]:
+        """向量通道，返回 rowid 列表。调用方须持锁。"""
+        vec_sql = f"""
+            SELECT c.rowid FROM chunks_vec v
+            JOIN chunks c ON c.rowid = v.rowid
+            JOIN documents d ON d.collection = c.collection AND d.id = c.document_id
+            WHERE c.collection = ? AND v.embedding MATCH ? AND k = ?{filter_sql}
+            ORDER BY distance
+        """
+        rows = self._conn.execute(
+            vec_sql,
+            (self.name, _vec_to_sqlite_literal(query_vec), self.config.retrieval.vector_top_k, *filter_params),
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def _check_strong_signal(self, query: str, filters: dict[str, Any] | None) -> bool:
+        """BM25 probe：检查是否有强信号（跳过 expansion）。"""
+        with self._lock:
+            filter_sql, filter_params = self._build_filter_clause(filters)
+            probe_sql = f"""
+                SELECT rank FROM chunks_fts f
+                JOIN chunks c ON c.rowid = f.rowid
+                JOIN documents d ON d.collection = c.collection AND d.id = c.document_id
+                WHERE c.collection = ? AND f.text MATCH ?{filter_sql}
+                ORDER BY rank LIMIT 2
+            """
+            rows = self._conn.execute(
+                probe_sql,
+                (self.name, query, *filter_params),
+            ).fetchall()
+        if len(rows) < 2:
+            return False
+        top1 = abs(rows[0][0])
+        top2 = abs(rows[1][0])
+        return (
+            top1 > self.config.expansion.strong_signal_threshold
+            and (top1 - top2) > self.config.expansion.strong_signal_gap
+        )
+
     # --- reads ---
 
     def get_document(self, document_id: str) -> dict[str, Any] | None:
@@ -293,48 +349,57 @@ class SqliteCollection:
         rerank: bool = False,
         filters: dict[str, Any] | None = None,
     ) -> list[SearchResult]:
-        """混合检索（BM25 + 向量 + RRF），rerank=True 时接入 Reranker 重排序。"""
+        """混合检索（BM25 + 向量 + RRF），支持 expansion/rerank/blending。"""
         if not query.strip() or top_k <= 0:
             return []
+
+        # Step 1 & 2: Query Expansion（如果启用）
+        expansion_variants: dict[str, list[str]] = {"lex": [], "vec": [], "hyde": []}
+        skip_expansion = False
+
+        if self.config.expansion.enabled:
+            skip_expansion = self._check_strong_signal(query, filters)
+            if not skip_expansion:
+                from qmd.core.expansion import QueryExpander
+                expansion_variants = QueryExpander().expand(query)
+
+        # 原查询 embedding
         query_vec = self._embedder.embed([query])[0]
 
-        # rerank=True 时先拿 top_k_candidates 个候选，再重排取 top_k
+        # Step 3: 并行检索（构建多个检索列表 + 权重）
         rrf_limit = self.config.rerank.top_k_candidates if rerank else top_k
 
         with self._lock:
             filter_sql, filter_params = self._build_filter_clause(filters)
 
-            bm25_sql = f"""
-                SELECT c.rowid FROM chunks_fts f
-                JOIN chunks c ON c.rowid = f.rowid
-                JOIN documents d ON d.collection = c.collection AND d.id = c.document_id
-                WHERE c.collection = ? AND f.text MATCH ?{filter_sql}
-                ORDER BY rank LIMIT ?
-            """
-            bm25_rows = self._conn.execute(
-                bm25_sql,
-                (self.name, query, *filter_params, self.config.retrieval.bm25_top_k),
-            ).fetchall()
-            bm25_ids = [r[0] for r in bm25_rows]
+            ranked_lists: list[list[int]] = []
+            weights: list[float] = []
 
-            vec_sql = f"""
-                SELECT c.rowid FROM chunks_vec v
-                JOIN chunks c ON c.rowid = v.rowid
-                JOIN documents d ON d.collection = c.collection AND d.id = c.document_id
-                WHERE c.collection = ? AND v.embedding MATCH ? AND k = ?{filter_sql}
-                ORDER BY distance
-            """
-            vec_rows = self._conn.execute(
-                vec_sql,
-                (self.name, _vec_to_sqlite_literal(query_vec), self.config.retrieval.vector_top_k, *filter_params),
-            ).fetchall()
-            vec_ids = [r[0] for r in vec_rows]
+            # 原查询 BM25 + Vector（权重 2.0）
+            bm25_ids = self._bm25_search(query, filter_sql, filter_params)
+            vec_ids = self._vector_search(query_vec, filter_sql, filter_params)
+            ranked_lists.extend([bm25_ids, vec_ids])
+            weights.extend([2.0, 2.0])
 
-            fused = rrf_fuse([bm25_ids, vec_ids], k=self.config.retrieval.rrf_k)[:rrf_limit]
+            # 扩展查询检索（权重 1.0）
+            for lex_q in expansion_variants.get("lex", []):
+                lex_ids = self._bm25_search(lex_q, filter_sql, filter_params)
+                if lex_ids:
+                    ranked_lists.append(lex_ids)
+                    weights.append(1.0)
+
+            for vec_q in expansion_variants.get("vec", []) + expansion_variants.get("hyde", []):
+                vec_q_vec = self._embedder.embed([vec_q])[0]
+                vec_q_ids = self._vector_search(vec_q_vec, filter_sql, filter_params)
+                if vec_q_ids:
+                    ranked_lists.append(vec_q_ids)
+                    weights.append(1.0)
+
+            # Step 4: RRF 融合
+            fused = rrf_fuse(ranked_lists, k=self.config.retrieval.rrf_k, weights=weights)[:rrf_limit]
             if not fused:
                 return []
 
-            rowid_to_score = dict(fused)
             placeholders = ",".join("?" for _ in fused)
             detail_rows = self._conn.execute(
                 f"""
@@ -346,10 +411,8 @@ class SqliteCollection:
                 tuple(rowid for rowid, _ in fused),
             ).fetchall()
 
-        # 按 RRF 顺序重建 candidates（rowid 顺序即 RRF 排名顺序）
-        rowid_to_detail: dict[int, tuple] = {
-            row[0]: row for row in detail_rows
-        }
+        # 按 RRF 顺序重建 candidates
+        rowid_to_detail: dict[int, tuple] = {row[0]: row for row in detail_rows}
         candidates: list[SearchResult] = []
         for rowid, rrf_score in fused:
             if rowid not in rowid_to_detail:
@@ -370,12 +433,19 @@ class SqliteCollection:
                 )
             )
 
+        # Step 5: Rerank
         if rerank:
             from qmd.core.rerank import Reranker
             scores = Reranker().score(query, [c.text for c in candidates])
             for c, s in zip(candidates, scores):
                 c.rerank_score = s
             candidates.sort(key=lambda c: c.rerank_score, reverse=True)  # type: ignore[arg-type]
+
+            # Step 6: Position-aware Blending
+            if self.config.retrieval.blending_mode == "position_aware":
+                candidates = position_aware_blend(
+                    candidates, self.config.retrieval.blending_weights
+                )
         else:
             for c in candidates:
                 c.rerank_score = None
